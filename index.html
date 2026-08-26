@@ -82,8 +82,10 @@
   .exercise-row {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 0; border-bottom: 1px solid var(--card-border);
+    cursor: pointer;
   }
   .exercise-row:last-child { border-bottom: none; }
+  .exercise-row:active { background: #20252d; }
   .exercise-row .name { font-weight: 600; }
 
   nav.bottomnav {
@@ -105,23 +107,44 @@
     font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase;
     letter-spacing: 0.04em; margin-bottom: 8px;
   }
-  .session-exercise { padding: 10px 0; border-top: 1px solid var(--card-border); }
-  .session-exercise:first-child { border-top: none; }
-  .superset-block .session-exercise { border-top: 1px solid rgba(79,140,255,0.25); }
-  .session-exercise-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  .session-exercise-head .name { font-weight: 600; }
-  .set-list { margin: 8px 0; font-size: 15px; }
-  .set-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; }
-  .set-item .del { color: var(--danger); background: none; border: none; font-size: 15px; cursor: pointer; padding: 4px 8px; }
-  .add-set-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
-  .add-set-row input { width: 78px; padding: 10px; text-align: center; }
-  .add-set-row .btn-sm { flex-shrink: 0; }
+  .block-card { padding: 12px 0; border-top: 1px solid var(--card-border); }
+  .block-card:first-child { border-top: none; }
+  .superset-block .block-card { padding: 0; border-top: none; }
+  .block-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .block-card-head .titles { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .select-check {
     width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--card-border);
     display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
     color: transparent; font-size: 14px; flex-shrink: 0;
   }
   .select-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .remove-x { background: none; border: none; color: var(--text-dim); font-size: 18px; cursor: pointer; padding: 2px 6px; }
+
+  /* Spreadsheet-style set table */
+  .set-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  .set-table-row {
+    display: grid; grid-template-columns: 1fr 66px 54px 30px; gap: 8px; align-items: center;
+    padding: 7px 0; border-bottom: 1px solid var(--card-border);
+  }
+  .set-table-row.head {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim);
+    border-bottom: 1px solid var(--card-border); padding-bottom: 6px;
+  }
+  .set-table-row:last-child { border-bottom: none; }
+  .set-table-row .cell-exercise { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .set-table-row select.cell-exercise-select { padding: 6px 4px; font-size: 13px; }
+  .set-table-row input.cell-num {
+    padding: 8px 4px; text-align: center; width: 100%;
+  }
+  .set-table-row .del {
+    color: var(--danger); background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px;
+  }
+  .set-table-row .add-btn {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    width: 26px; height: 26px; font-size: 16px; line-height: 1; cursor: pointer;
+  }
+  .set-table-row .add-btn:disabled { opacity: 0.35; }
+
   .remove-x { background: none; border: none; color: var(--text-dim); font-size: 18px; cursor: pointer; padding: 2px 6px; }
 
   .search-results { max-height: 260px; overflow-y: auto; margin-top: 8px; }
@@ -134,11 +157,15 @@
     position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 20;
     display: flex; align-items: flex-end; justify-content: center;
   }
+  .modal-backdrop.center { align-items: center; padding: 20px; }
   .modal-sheet {
     background: var(--card); border-radius: 14px 14px 0 0; padding: 18px 16px 24px;
     width: 100%; max-width: 640px; max-height: 82vh; overflow-y: auto;
   }
+  .modal-backdrop.center .modal-sheet { border-radius: 14px; max-height: 90vh; }
   .modal-sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+  .modal-actions > * { flex: 1; }
 
   #toast {
     position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%);
@@ -187,21 +214,11 @@
         <label for="newExName">Name</label>
         <input type="text" id="newExName" placeholder="e.g. Barbell Squat">
       </div>
-      <div class="field">
-        <label for="newExCategory">Category</label>
-        <input type="text" id="newExCategory" list="categoryList" placeholder="e.g. Squat">
-        <datalist id="categoryList">
-          <option value="Squat">
-          <option value="Hinge">
-          <option value="Push">
-          <option value="Pull">
-          <option value="Core">
-          <option value="Accessory">
-        </datalist>
-      </div>
+      <div class="field" id="newExCategoryField"></div>
       <button class="btn block" id="submitNewExerciseBtn">Save Exercise</button>
     </div>
 
+    <p class="muted" style="margin-bottom:6px;">Tap an exercise to edit it.</p>
     <div id="libraryList"></div>
   </section>
 
@@ -210,13 +227,18 @@
     <div id="logStartView">
       <h2>Log Workout</h2>
       <p class="muted">Start a new session to begin adding exercises and sets.</p>
-      <button class="btn block" id="startWorkoutBtn">Start Workout</button>
+      <button class="btn block" id="startWorkoutBtn">Log Workout</button>
     </div>
 
     <div id="logActiveView" style="display:none;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
-        <h2 id="logDateHeading">Workout</h2>
+        <h2 id="logHeading">Log Workout</h2>
         <button class="btn-sm danger" id="discardWorkoutBtn">Discard</button>
+      </div>
+
+      <div class="field">
+        <label for="sessionDateInput">Date</label>
+        <input type="date" id="sessionDateInput">
       </div>
 
       <div class="field">
@@ -255,15 +277,20 @@
 (function () {
   'use strict';
 
+  var NEW_CATEGORY_VALUE = '__new__';
+
   // ---------- State ----------
   var API_URL = localStorage.getItem('workoutlog.apiUrl') || '';
   var exercisesCache = [];
-  var currentScreen = 'library';
 
-  // Active in-progress workout session (client-side only until saved)
-  var session = null; // { date: 'yyyy-mm-dd', items: [ {localId, exerciseId, name, category, blockId, sets:[{weight,reps}]} ] }
+  // Active in-progress (or being-edited) workout session.
+  // items: [{localId, exerciseId, name, category, blockId}]
+  // sets:  [{localId, itemLocalId, weight, reps}]  (order = insertion/chronological order)
+  var session = null;
+  var sessionMode = 'new'; // 'new' | 'edit'
   var selectMode = false;
   var selectedLocalIds = [];
+  var entrySelection = {}; // blockId -> itemLocalId, sticky exercise choice for superset entry rows
 
   // ---------- Utilities ----------
   function $(id) { return document.getElementById(id); }
@@ -286,6 +313,9 @@
     t.style.display = 'block';
     clearTimeout(showToast._t);
     showToast._t = setTimeout(function () { t.style.display = 'none'; }, 2600);
+  }
+  function distinctCategories() {
+    return Array.from(new Set(exercisesCache.map(function (e) { return e.category; }).filter(Boolean))).sort();
   }
 
   // ---------- API ----------
@@ -313,7 +343,6 @@
 
   // ---------- Navigation ----------
   function showScreen(name) {
-    currentScreen = name;
     document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('active'); });
     $('screen-' + name).classList.add('active');
     document.querySelectorAll('.bottomnav button').forEach(function (b) {
@@ -346,6 +375,37 @@
     showScreen('library');
   });
 
+  // ---------- Category select widget (shared: Add Exercise + Edit Exercise) ----------
+  function categorySelectHtml(idPrefix, selected) {
+    var cats = distinctCategories();
+    if (selected && cats.indexOf(selected) === -1) cats.push(selected);
+    var options = cats.map(function (c) {
+      return '<option value="' + escapeHtml(c) + '"' + (c === selected ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+    }).join('');
+    return '<label for="' + idPrefix + '-select">Category</label>' +
+      '<select id="' + idPrefix + '-select">' +
+        '<option value="">Uncategorized</option>' +
+        options +
+        '<option value="' + NEW_CATEGORY_VALUE + '">+ Add New Category</option>' +
+      '</select>' +
+      '<input type="text" id="' + idPrefix + '-new" placeholder="New category name" style="display:none; margin-top:8px;">';
+  }
+  function wireCategorySelect(idPrefix) {
+    var sel = $(idPrefix + '-select');
+    var newInput = $(idPrefix + '-new');
+    sel.addEventListener('change', function () {
+      newInput.style.display = sel.value === NEW_CATEGORY_VALUE ? 'block' : 'none';
+      if (sel.value === NEW_CATEGORY_VALUE) newInput.focus();
+    });
+  }
+  function readCategorySelect(idPrefix) {
+    var sel = $(idPrefix + '-select');
+    if (sel.value === NEW_CATEGORY_VALUE) {
+      return $(idPrefix + '-new').value.trim();
+    }
+    return sel.value;
+  }
+
   // ---------- Library ----------
   function loadLibrary() {
     apiGet('getExercises').then(function (data) {
@@ -356,7 +416,7 @@
   }
 
   function populateCategoryFilter() {
-    var cats = Array.from(new Set(exercisesCache.map(function (e) { return e.category; }).filter(Boolean))).sort();
+    var cats = distinctCategories();
     var sel = $('libraryCategoryFilter');
     var current = sel.value;
     sel.innerHTML = '<option value="">All categories</option>' +
@@ -379,9 +439,16 @@
       return;
     }
     el.innerHTML = '<div class="card">' + list.map(function (e) {
-      return '<div class="exercise-row"><span class="name">' + escapeHtml(e.name) + '</span>' +
+      return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '"><span class="name">' + escapeHtml(e.name) + '</span>' +
         '<span class="chip">' + escapeHtml(e.category || 'Uncategorized') + '</span></div>';
     }).join('') + '</div>';
+
+    el.querySelectorAll('.exercise-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var ex = exercisesCache.find(function (e) { return e.id === row.dataset.id; });
+        if (ex) openEditExerciseModal(ex);
+      });
+    });
   }
 
   $('librarySearch').addEventListener('input', renderLibraryList);
@@ -389,43 +456,84 @@
 
   $('toggleAddExerciseBtn').addEventListener('click', function () {
     var f = $('addExerciseForm');
-    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    var show = f.style.display === 'none';
+    f.style.display = show ? 'block' : 'none';
+    if (show) {
+      $('newExCategoryField').innerHTML = categorySelectHtml('newEx', '');
+      wireCategorySelect('newEx');
+    }
   });
 
   $('submitNewExerciseBtn').addEventListener('click', function () {
     var name = $('newExName').value.trim();
-    var category = $('newExCategory').value.trim();
+    var category = readCategorySelect('newEx');
     if (!name) { showToast('Name is required', true); return; }
     apiPost('addExercise', { name: name, category: category }).then(function () {
       $('newExName').value = '';
-      $('newExCategory').value = '';
       $('addExerciseForm').style.display = 'none';
       showToast('Exercise added');
       loadLibrary();
     }).catch(function (err) { showToast(err.message, true); });
   });
 
+  function openEditExerciseModal(ex) {
+    var body =
+      '<div class="field"><label for="editExName">Name</label>' +
+      '<input type="text" id="editExName" value="' + escapeHtml(ex.name) + '"></div>' +
+      '<div class="field" id="editExCategoryField">' + categorySelectHtml('editEx', ex.category || '') + '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn secondary" id="editExCancelBtn">Cancel</button>' +
+        '<button class="btn" id="editExSaveBtn">Save</button>' +
+      '</div>';
+    var backdrop = showModal('Edit Exercise', body);
+    wireCategorySelect('editEx');
+    backdrop.querySelector('#editExCancelBtn').addEventListener('click', function () { closeModal(backdrop); });
+    backdrop.querySelector('#editExSaveBtn').addEventListener('click', function () {
+      var name = $('editExName').value.trim();
+      var category = readCategorySelect('editEx');
+      if (!name) { showToast('Name is required', true); return; }
+      apiPost('updateExercise', { id: ex.id, name: name, category: category }).then(function () {
+        closeModal(backdrop);
+        showToast('Exercise updated');
+        loadLibrary();
+      }).catch(function (err) { showToast(err.message, true); });
+    });
+  }
+
   // ---------- Log Workout ----------
-  $('startWorkoutBtn').addEventListener('click', function () {
-    session = { date: todayISO(), items: [] };
+  function startNewSession() {
+    session = { id: null, date: todayISO(), items: [], sets: [] };
+    sessionMode = 'new';
     selectMode = false;
     selectedLocalIds = [];
+    entrySelection = {};
+    $('logHeading').textContent = 'Log Workout';
+    $('saveWorkoutBtn').textContent = 'Save Workout';
     $('logStartView').style.display = 'none';
     $('logActiveView').style.display = 'block';
-    $('logDateHeading').textContent = 'Workout — ' + session.date;
+    $('sessionDateInput').value = session.date;
     $('sessionExerciseSearch').value = '';
     $('sessionSearchResults').innerHTML = '';
     renderSession();
     if (!exercisesCache.length) {
       apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
     }
+  }
+
+  $('startWorkoutBtn').addEventListener('click', startNewSession);
+
+  $('sessionDateInput').addEventListener('change', function () {
+    if (session) session.date = this.value;
   });
 
   $('discardWorkoutBtn').addEventListener('click', function () {
-    if (!confirm('Discard this workout? Nothing will be saved.')) return;
+    var msg = sessionMode === 'edit' ? 'Discard changes to this workout?' : 'Discard this workout? Nothing will be saved.';
+    if (!confirm(msg)) return;
+    var wasEdit = sessionMode === 'edit';
     session = null;
     $('logActiveView').style.display = 'none';
     $('logStartView').style.display = 'block';
+    if (wasEdit) showScreen('history'); else showScreen('log');
   });
 
   $('sessionExerciseSearch').addEventListener('input', function () {
@@ -455,14 +563,14 @@
       exerciseId: ex.id,
       name: ex.name,
       category: ex.category,
-      blockId: uid(),
-      sets: []
+      blockId: uid()
     });
     renderSession();
   }
 
   function removeExerciseFromSession(localId) {
     session.items = session.items.filter(function (i) { return i.localId !== localId; });
+    session.sets = session.sets.filter(function (s) { return s.itemLocalId !== localId; });
     selectedLocalIds = selectedLocalIds.filter(function (id) { return id !== localId; });
     renderSession();
   }
@@ -514,80 +622,157 @@
     var blocks = groupByBlock(session.items);
     el.innerHTML = blocks.map(function (block) {
       var isSuperset = block.items.length > 1;
-      var inner = block.items.map(renderSessionExercise).join('');
+      var inner = renderBlockTable(block);
       if (isSuperset) {
         return '<div class="superset-block"><div class="superset-label">Superset</div>' + inner + '</div>';
       }
-      return inner;
+      return '<div class="block-card">' + inner + '</div>';
     }).join('');
 
-    // wire up events
     el.querySelectorAll('[data-action]').forEach(function (node) {
       node.addEventListener('click', function () {
         var action = node.dataset.action;
         var localId = node.dataset.local;
         if (action === 'select') toggleSelect(localId);
         else if (action === 'remove') removeExerciseFromSession(localId);
-        else if (action === 'addset') addSet(localId, node);
-        else if (action === 'delset') deleteSet(localId, parseInt(node.dataset.idx, 10));
+        else if (action === 'addset') addSet(node.dataset.block);
+        else if (action === 'delset') deleteSet(node.dataset.setid);
+      });
+    });
+    el.querySelectorAll('select.cell-exercise-select').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        entrySelection[sel.dataset.block] = sel.value;
+      });
+    });
+    el.querySelectorAll('input.cell-num').forEach(function (input) {
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); addSet(input.dataset.block); }
       });
     });
   }
 
-  function renderSessionExercise(item) {
-    var checked = selectedLocalIds.indexOf(item.localId) !== -1;
-    var setsHtml = item.sets.map(function (s, idx) {
-      return '<div class="set-item"><span>Set ' + (idx + 1) + ': ' + escapeHtml(s.weight) + ' x ' + escapeHtml(s.reps) + '</span>' +
-        '<button class="del" data-action="delset" data-local="' + item.localId + '" data-idx="' + idx + '">✕</button></div>';
-    }).join('') || '<div class="muted">No sets yet</div>';
+  function renderBlockTable(block) {
+    var isSuperset = block.items.length > 1;
+    var checkboxes = block.items.map(function (item) {
+      var checked = selectedLocalIds.indexOf(item.localId) !== -1;
+      return '<span class="select-check ' + (checked ? 'checked' : '') + '" data-action="select" data-local="' + item.localId + '">' + (checked ? '✓' : '') + '</span>' +
+        '<span class="name">' + escapeHtml(item.name) + '</span>' +
+        '<button class="remove-x" data-action="remove" data-local="' + item.localId + '">✕</button>';
+    }).join('<span class="muted" style="margin:0 4px;">+</span>');
 
-    return '<div class="session-exercise">' +
-      '<div class="session-exercise-head">' +
-        '<div style="display:flex; align-items:center; gap:10px;">' +
-          '<span class="select-check ' + (checked ? 'checked' : '') + '" data-action="select" data-local="' + item.localId + '">' + (checked ? '✓' : '') + '</span>' +
-          '<div><div class="name">' + escapeHtml(item.name) + '</div><span class="chip">' + escapeHtml(item.category || '') + '</span></div>' +
-        '</div>' +
-        '<button class="remove-x" data-action="remove" data-local="' + item.localId + '">✕</button>' +
-      '</div>' +
-      '<div class="set-list">' + setsHtml + '</div>' +
-      '<div class="add-set-row">' +
-        '<input type="number" inputmode="decimal" placeholder="lbs" class="w-input" id="w-' + item.localId + '">' +
-        '<span class="muted">x</span>' +
-        '<input type="number" inputmode="numeric" placeholder="reps" class="r-input" id="r-' + item.localId + '">' +
-        '<button class="btn-sm" data-action="addset" data-local="' + item.localId + '">Add Set</button>' +
-      '</div>' +
+    var rows = session.sets.filter(function (s) {
+      return block.items.some(function (i) { return i.localId === s.itemLocalId; });
+    });
+
+    var rowsHtml = rows.map(function (s) {
+      var item = block.items.find(function (i) { return i.localId === s.itemLocalId; }) || {};
+      return '<div class="set-table-row">' +
+        '<span class="cell-exercise">' + escapeHtml(item.name || '') + '</span>' +
+        '<span class="cell-exercise" style="text-align:center;">' + escapeHtml(s.weight) + '</span>' +
+        '<span class="cell-exercise" style="text-align:center;">' + escapeHtml(s.reps) + '</span>' +
+        '<button class="del" data-action="delset" data-setid="' + s.localId + '">✕</button>' +
+      '</div>';
+    }).join('');
+
+    var defaultItem = entrySelection[block.blockId] && block.items.some(function (i) { return i.localId === entrySelection[block.blockId]; })
+      ? entrySelection[block.blockId] : block.items[0].localId;
+    entrySelection[block.blockId] = defaultItem;
+
+    var exerciseCell = isSuperset
+      ? '<select class="cell-exercise-select" data-block="' + block.blockId + '">' +
+          block.items.map(function (i) {
+            return '<option value="' + i.localId + '"' + (i.localId === defaultItem ? ' selected' : '') + '>' + escapeHtml(i.name) + '</option>';
+          }).join('') +
+        '</select>'
+      : '<span class="cell-exercise">' + escapeHtml(block.items[0].name) + '</span>';
+
+    var entryRow = '<div class="set-table-row">' +
+      exerciseCell +
+      '<input type="number" inputmode="decimal" class="cell-num" placeholder="lbs" id="w-' + block.blockId + '" data-block="' + block.blockId + '">' +
+      '<input type="number" inputmode="numeric" class="cell-num" placeholder="reps" id="r-' + block.blockId + '" data-block="' + block.blockId + '">' +
+      '<button class="add-btn" data-action="addset" data-block="' + block.blockId + '">+</button>' +
     '</div>';
+
+    return '<div class="block-card-head"><div class="titles">' + checkboxes + '</div></div>' +
+      '<div class="set-table">' +
+        '<div class="set-table-row head"><span>Exercise</span><span>Weight (lbs)</span><span>Reps</span><span></span></div>' +
+        rowsHtml +
+        entryRow +
+      '</div>';
   }
 
-  function addSet(localId, triggerNode) {
-    var item = session.items.find(function (i) { return i.localId === localId; });
-    if (!item) return;
-    var wEl = $('w-' + localId), rEl = $('r-' + localId);
+  function addSet(blockId) {
+    var wEl = $('w-' + blockId), rEl = $('r-' + blockId);
     var weight = parseFloat(wEl.value), reps = parseInt(rEl.value, 10);
     if (isNaN(weight) || isNaN(reps)) { showToast('Enter weight and reps', true); return; }
-    item.sets.push({ weight: weight, reps: reps });
+    var itemLocalId = entrySelection[blockId];
+    session.sets.push({ localId: uid(), itemLocalId: itemLocalId, weight: weight, reps: reps });
+    renderSession();
+    var newW = $('w-' + blockId);
+    if (newW) newW.focus();
+  }
+
+  function deleteSet(setLocalId) {
+    session.sets = session.sets.filter(function (s) { return s.localId !== setLocalId; });
     renderSession();
   }
 
-  function deleteSet(localId, idx) {
-    var item = session.items.find(function (i) { return i.localId === localId; });
-    if (!item) return;
-    item.sets.splice(idx, 1);
+  function loadWorkoutIntoSession(workout) {
+    session = { id: workout.id, date: workout.date, items: [], sets: [] };
+    sessionMode = 'edit';
+    selectMode = false;
+    selectedLocalIds = [];
+    entrySelection = {};
+
+    var itemKeyMap = {};
+    workout.sets.forEach(function (s) {
+      var key = s.blockId + '|' + s.exerciseId;
+      if (!itemKeyMap[key]) {
+        var localId = uid();
+        itemKeyMap[key] = localId;
+        session.items.push({ localId: localId, exerciseId: s.exerciseId, name: s.exerciseName, category: s.exerciseCategory, blockId: s.blockId });
+      }
+      session.sets.push({ localId: uid(), itemLocalId: itemKeyMap[key], weight: s.weight, reps: s.reps });
+    });
+
+    $('logHeading').textContent = 'Edit Workout';
+    $('saveWorkoutBtn').textContent = 'Save Changes';
+    $('logStartView').style.display = 'none';
+    $('logActiveView').style.display = 'block';
+    $('sessionDateInput').value = session.date;
+    $('sessionExerciseSearch').value = '';
+    $('sessionSearchResults').innerHTML = '';
     renderSession();
+    if (!exercisesCache.length) {
+      apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
+    }
+    showScreen('log');
   }
 
   $('saveWorkoutBtn').addEventListener('click', function () {
     if (!session || !session.items.length) { showToast('Add at least one exercise', true); return; }
-    var hasAnySet = session.items.some(function (i) { return i.sets.length > 0; });
-    if (!hasAnySet) { showToast('Log at least one set', true); return; }
+    if (!session.date) { showToast('Pick a date', true); return; }
+    if (!session.sets.length) { showToast('Log at least one set', true); return; }
 
-    var payloadItems = session.items
-      .filter(function (i) { return i.sets.length > 0; })
-      .map(function (i) { return { exerciseId: i.exerciseId, blockId: i.blockId, sets: i.sets }; });
+    // Build payload per item (not per block) since a superset block can hold
+    // sets for multiple different exerciseIds sharing the same blockId.
+    var payloadItems = session.items.map(function (item) {
+      return {
+        exerciseId: item.exerciseId,
+        blockId: item.blockId,
+        sets: session.sets.filter(function (s) { return s.itemLocalId === item.localId; })
+          .map(function (s) { return { weight: s.weight, reps: s.reps }; })
+      };
+    }).filter(function (i) { return i.sets.length > 0; });
+
+    var action = sessionMode === 'edit' ? 'updateWorkout' : 'saveWorkout';
+    var payload = sessionMode === 'edit'
+      ? { id: session.id, date: session.date, items: payloadItems }
+      : { date: session.date, items: payloadItems };
 
     $('saveWorkoutBtn').disabled = true;
-    apiPost('saveWorkout', { date: session.date, items: payloadItems }).then(function () {
-      showToast('Workout saved');
+    apiPost(action, payload).then(function () {
+      showToast(sessionMode === 'edit' ? 'Workout updated' : 'Workout saved');
       session = null;
       $('logActiveView').style.display = 'none';
       $('logStartView').style.display = 'block';
@@ -630,18 +815,48 @@
         var isSuperset = block.exerciseGroups.length > 1;
         var inner = block.exerciseGroups.map(function (g) {
           var setsHtml = g.sets.map(function (s, idx) {
-            return '<div class="set-item"><span>Set ' + (idx + 1) + ': ' + escapeHtml(s.weight) + ' x ' + escapeHtml(s.reps) + '</span></div>';
+            return '<div class="set-table-row"><span>Set ' + (idx + 1) + '</span><span>' + escapeHtml(s.weight) + ' lbs</span><span>' + escapeHtml(s.reps) + ' reps</span><span></span></div>';
           }).join('');
-          return '<div class="session-exercise"><div class="name">' + escapeHtml(g.exerciseName) +
+          return '<div class="block-card"><div class="name">' + escapeHtml(g.exerciseName) +
             '</div><span class="chip">' + escapeHtml(g.exerciseCategory || '') + '</span>' +
-            '<div class="set-list">' + setsHtml + '</div></div>';
+            '<div class="set-table">' + setsHtml + '</div></div>';
         }).join('');
         if (isSuperset) return '<div class="superset-block"><div class="superset-label">Superset</div>' + inner + '</div>';
         return inner;
-      }).join('');
+      }).join('') || '<div class="empty-state">No sets recorded.</div>';
 
-      showModal('Workout — ' + w.date, body || '<div class="empty-state">No sets recorded.</div>');
+      body += '<div class="modal-actions">' +
+        '<button class="btn secondary" id="detailEditBtn">Edit</button>' +
+        '<button class="btn danger" id="detailDeleteBtn">Delete</button>' +
+      '</div>';
+
+      var backdrop = showModal('Workout — ' + w.date, body);
+      backdrop.querySelector('#detailEditBtn').addEventListener('click', function () {
+        closeModal(backdrop);
+        loadWorkoutIntoSession(w);
+      });
+      backdrop.querySelector('#detailDeleteBtn').addEventListener('click', function () {
+        closeModal(backdrop);
+        confirmDeleteWorkout(w.id);
+      });
     }).catch(function (err) { showToast(err.message, true); });
+  }
+
+  function confirmDeleteWorkout(id) {
+    var body = '<p>Are you sure you want to erase this workout?</p>' +
+      '<div class="modal-actions">' +
+        '<button class="btn secondary" id="confirmNoBtn">No</button>' +
+        '<button class="btn danger" id="confirmDeleteBtn">Delete</button>' +
+      '</div>';
+    var backdrop = showModal('Delete Workout', body, true);
+    backdrop.querySelector('#confirmNoBtn').addEventListener('click', function () { closeModal(backdrop); });
+    backdrop.querySelector('#confirmDeleteBtn').addEventListener('click', function () {
+      apiPost('deleteWorkout', { id: id }).then(function () {
+        closeModal(backdrop);
+        showToast('Workout deleted');
+        loadHistory();
+      }).catch(function (err) { showToast(err.message, true); });
+    });
   }
 
   function groupSetsByBlock(sets) {
@@ -661,15 +876,20 @@
     });
   }
 
-  function showModal(title, bodyHtml) {
+  // ---------- Modal helpers ----------
+  function showModal(title, bodyHtml, centered) {
     var backdrop = document.createElement('div');
-    backdrop.className = 'modal-backdrop';
+    backdrop.className = 'modal-backdrop' + (centered ? ' center' : '');
     backdrop.innerHTML = '<div class="modal-sheet">' +
       '<div class="modal-sheet-head"><h3>' + escapeHtml(title) + '</h3><button class="icon-btn" id="closeModalBtn">Close</button></div>' +
       bodyHtml + '</div>';
     document.body.appendChild(backdrop);
-    backdrop.addEventListener('click', function (e) { if (e.target === backdrop) document.body.removeChild(backdrop); });
-    backdrop.querySelector('#closeModalBtn').addEventListener('click', function () { document.body.removeChild(backdrop); });
+    backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(backdrop); });
+    backdrop.querySelector('#closeModalBtn').addEventListener('click', function () { closeModal(backdrop); });
+    return backdrop;
+  }
+  function closeModal(backdrop) {
+    if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
   }
 
   // ---------- Init ----------
