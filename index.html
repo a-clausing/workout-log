@@ -92,6 +92,8 @@
     display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-pill);
     background: #d7dbe2; color: #20232a;
   }
+  .chip-equipment { background: #cfe0ff; color: #163a73; }
+  .chip-flag { background: #ffd6d6; color: #7a1414; }
   .exercise-row {
     display: flex; align-items: center; justify-content: space-between;
     padding: 13px 4px; border-bottom: 1px solid var(--card-border);
@@ -320,8 +322,8 @@
         <label for="newExName">Name</label>
         <input type="text" id="newExName" placeholder="e.g. Barbell Squat">
       </div>
-      <div class="field" id="newExCategoryField"></div>
       <div class="field" id="newExEquipmentField"></div>
+      <div class="field" id="newExCategoryField"></div>
       <div class="field" id="newExMusclesField"></div>
       <button class="btn block" id="submitNewExerciseBtn">Save Exercise</button>
     </div>
@@ -347,6 +349,11 @@
       <div class="field">
         <label for="sessionDateInput">Date</label>
         <input type="date" id="sessionDateInput">
+      </div>
+
+      <div class="field">
+        <label for="sessionNameInput">Workout Name</label>
+        <input type="text" id="sessionNameInput" placeholder="Workout">
       </div>
 
       <div id="linkBar" style="display:none; margin-bottom:12px;">
@@ -431,6 +438,9 @@
 
   function chipHtml(category) {
     return '<span class="chip">' + escapeHtml(category || 'Uncategorized') + '</span>';
+  }
+  function equipmentChipHtml(equipment) {
+    return equipment ? '<span class="chip chip-equipment">' + escapeHtml(equipment) + '</span>' : '';
   }
 
   // Simple edit-distance check to catch near-duplicate exercise names
@@ -882,8 +892,9 @@
       return;
     }
     el.innerHTML = '<div class="card">' + list.map(function (e) {
-      var flag = isExerciseIncomplete(e) ? '<span title="Missing category, equipment, or muscles" style="margin-left:8px;">🚩</span>' : '';
-      return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '"><span class="name">' + escapeHtml(e.name) + '</span>' + flag + '</div>';
+      var flag = isExerciseIncomplete(e) ? '<span class="chip chip-flag" title="Missing category, equipment, or muscles">Incomplete</span>' : '';
+      return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '"><span class="name">' + escapeHtml(e.name) + '</span>' +
+        '<span style="display:flex; align-items:center; gap:6px;">' + equipmentChipHtml(e.equipment) + flag + '</span></div>';
     }).join('') + '</div>';
 
     el.querySelectorAll('.exercise-row').forEach(function (row) {
@@ -903,10 +914,10 @@
     var show = f.style.display === 'none';
     f.style.display = show ? 'block' : 'none';
     if (show) {
-      $('newExCategoryField').innerHTML = categorySelectHtml('newEx', '');
-      wireCategorySelect('newEx');
       $('newExEquipmentField').innerHTML = equipmentSelectHtml('newEx', '');
       wireEquipmentSelect('newEx');
+      $('newExCategoryField').innerHTML = categorySelectHtml('newEx', '');
+      wireCategorySelect('newEx');
       $('newExMusclesField').innerHTML = '<div id="newEx-muscles-editor"></div>';
       newExMuscleEditor = createMuscleEditor('newEx', []);
     }
@@ -943,8 +954,8 @@
       '</div>' +
       '<div class="field"><label for="editExName">Name</label>' +
       '<input type="text" id="editExName" value="' + escapeHtml(ex.name) + '"></div>' +
-      '<div class="field" id="editExCategoryField">' + categorySelectHtml('editEx', ex.category || '') + '</div>' +
       '<div class="field" id="editExEquipmentField">' + equipmentSelectHtml('editEx', ex.equipment || '') + '</div>' +
+      '<div class="field" id="editExCategoryField">' + categorySelectHtml('editEx', ex.category || '') + '</div>' +
       '<div class="field" id="editExMusclesField"><div id="editEx-muscles-editor"></div></div>' +
       '<div class="modal-actions">' +
         '<button class="btn secondary" id="editExCancelBtn">Cancel</button>' +
@@ -1030,7 +1041,7 @@
 
   // ---------- Log Workout ----------
   function startNewSession() {
-    session = { id: null, date: todayISO(), items: [], sets: [] };
+    session = { id: null, date: todayISO(), name: '', items: [], sets: [] };
     sessionMode = 'new';
     selectMode = false;
     selectedLocalIds = [];
@@ -1041,6 +1052,7 @@
     $('logStartView').style.display = 'none';
     $('logActiveView').style.display = 'block';
     $('sessionDateInput').value = session.date;
+    $('sessionNameInput').value = '';
     $('sessionExerciseSearch').value = '';
     $('sessionSearchResults').innerHTML = '';
     hideQuickAdd();
@@ -1054,6 +1066,10 @@
 
   $('sessionDateInput').addEventListener('change', function () {
     if (session) session.date = this.value;
+  });
+
+  $('sessionNameInput').addEventListener('input', function () {
+    if (session) session.name = this.value;
   });
 
   $('discardWorkoutBtn').addEventListener('click', function () {
@@ -1076,7 +1092,7 @@
     var matchesHtml = matches.length
       ? matches.map(function (e) {
           return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '">' +
-            '<span class="name">' + escapeHtml(e.name) + '</span>' + chipHtml(e.category) + '</div>';
+            '<span class="name">' + escapeHtml(e.name) + '</span>' + equipmentChipHtml(e.equipment) + '</div>';
         }).join('')
       : '<div class="muted" style="padding:8px 0;">No matches</div>';
     var quickAddHtml = '<div class="exercise-row" id="quickAddTrigger" style="color:var(--accent);">' +
@@ -1342,7 +1358,7 @@
   }
 
   function loadWorkoutIntoSession(workout) {
-    session = { id: workout.id, date: workout.date, items: [], sets: [] };
+    session = { id: workout.id, date: workout.date, name: workout.name === 'Workout' ? '' : (workout.name || ''), items: [], sets: [] };
     sessionMode = 'edit';
     selectMode = false;
     selectedLocalIds = [];
@@ -1365,6 +1381,7 @@
     $('logStartView').style.display = 'none';
     $('logActiveView').style.display = 'block';
     $('sessionDateInput').value = session.date;
+    $('sessionNameInput').value = session.name;
     $('sessionExerciseSearch').value = '';
     $('sessionSearchResults').innerHTML = '';
     hideQuickAdd();
@@ -1391,10 +1408,11 @@
       };
     }).filter(function (i) { return i.sets.length > 0; });
 
+    var workoutName = (session.name || '').trim() || 'Workout';
     var action = sessionMode === 'edit' ? 'updateWorkout' : 'saveWorkout';
     var payload = sessionMode === 'edit'
-      ? { id: session.id, date: session.date, items: payloadItems }
-      : { date: session.date, items: payloadItems };
+      ? { id: session.id, date: session.date, name: workoutName, items: payloadItems }
+      : { date: session.date, name: workoutName, items: payloadItems };
 
     $('saveWorkoutBtn').disabled = true;
     apiPost(action, payload).then(function () {
@@ -1421,7 +1439,8 @@
       }
       el.innerHTML = data.map(function (w) {
         return '<div class="card" data-id="' + escapeHtml(w.id) + '" style="cursor:pointer;">' +
-          '<div class="name" style="font-weight:700; margin-bottom:4px;">' + escapeHtml(w.date) + '</div>' +
+          '<div class="name" style="font-weight:700; margin-bottom:2px;">' + escapeHtml(w.date) + '</div>' +
+          '<div style="font-weight:600; margin-bottom:4px;">' + escapeHtml(w.name || 'Workout') + '</div>' +
           '<div class="muted">' + w.exerciseCount + ' exercise' + (w.exerciseCount === 1 ? '' : 's') +
           ' · ' + w.setCount + ' set' + (w.setCount === 1 ? '' : 's') + '</div>' +
         '</div>';
@@ -1458,7 +1477,7 @@
         '<button class="btn danger" id="detailDeleteBtn">Delete</button>' +
       '</div>';
 
-      var backdrop = showModal('Workout — ' + w.date, body);
+      var backdrop = showModal(w.date + ' — ' + (w.name || 'Workout'), body);
       backdrop.querySelector('#detailEditBtn').addEventListener('click', function () {
         closeModal(backdrop);
         loadWorkoutIntoSession(w);
