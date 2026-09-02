@@ -309,10 +309,10 @@
       <input type="text" id="librarySearch" placeholder="Search exercises...">
     </div>
     <div class="field">
-      <select id="libraryCategoryFilter">
-        <option value="">All categories</option>
-      </select>
+      <label class="muted" style="display:block; margin-bottom:6px;">Filter by</label>
+      <div class="tag-pill-grid" id="filterTypeChips"></div>
     </div>
+    <div class="field" id="libraryFilterValueRow" style="display:none;"></div>
     <button class="btn secondary block" id="toggleAddExerciseBtn" style="margin-bottom:14px;">+ Add Exercise</button>
 
     <div class="card" id="addExerciseForm" style="display:none;">
@@ -798,30 +798,82 @@
   }
 
   // ---------- Library ----------
+  var libraryFilterType = null; // null | 'equipment' | 'category' | 'muscle'
+  var libraryFilterValue = '';
+
   function loadLibrary() {
     apiGet('getExercises').then(function (data) {
       exercisesCache = data;
-      populateCategoryFilter();
+      renderFilterTypeChips();
+      renderFilterValueRow();
       renderLibraryList();
     }).catch(function (err) { showToast(err.message, true); });
   }
 
-  function populateCategoryFilter() {
-    var cats = distinctCategories();
-    var sel = $('libraryCategoryFilter');
-    var current = sel.value;
-    sel.innerHTML = '<option value="">All categories</option>' +
-      cats.map(function (c) { return '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>'; }).join('');
-    sel.value = current;
+  function distinctUsedEquipment() {
+    return Array.from(new Set(exercisesCache.map(function (e) { return e.equipment; }).filter(Boolean))).sort();
+  }
+  function distinctUsedPrimaryMuscles() {
+    return Array.from(new Set(exercisesCache.map(function (e) { return e.muscles && e.muscles[0]; }).filter(Boolean))).sort();
+  }
+
+  function renderFilterTypeChips() {
+    var types = [
+      { key: 'equipment', label: 'Equipment' },
+      { key: 'category', label: 'Category' },
+      { key: 'muscle', label: 'Muscle' }
+    ];
+    $('filterTypeChips').innerHTML = types.map(function (t) {
+      return '<span class="tag-pill ' + (libraryFilterType === t.key ? 'checked' : '') + '" data-filter-type="' + t.key + '">' + t.label + '</span>';
+    }).join('');
+    $('filterTypeChips').querySelectorAll('.tag-pill').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var key = chip.dataset.filterType;
+        libraryFilterType = (libraryFilterType === key) ? null : key;
+        libraryFilterValue = '';
+        renderFilterTypeChips();
+        renderFilterValueRow();
+        renderLibraryList();
+      });
+    });
+  }
+
+  function renderFilterValueRow() {
+    var row = $('libraryFilterValueRow');
+    if (!libraryFilterType) { row.style.display = 'none'; row.innerHTML = ''; return; }
+
+    var options, emptyLabel;
+    if (libraryFilterType === 'equipment') { options = distinctUsedEquipment(); emptyLabel = 'All Equipment'; }
+    else if (libraryFilterType === 'category') { options = distinctCategories(); emptyLabel = 'All Categories'; }
+    else { options = distinctUsedPrimaryMuscles(); emptyLabel = 'All Primary Muscles'; }
+
+    row.style.display = 'block';
+    row.innerHTML = '<select id="libraryFilterValueSelect"><option value="">' + escapeHtml(emptyLabel) + '</option>' +
+      options.map(function (o) {
+        return '<option value="' + escapeHtml(o) + '"' + (o === libraryFilterValue ? ' selected' : '') + '>' + escapeHtml(o) + '</option>';
+      }).join('') +
+      '</select>';
+    $('libraryFilterValueSelect').addEventListener('change', function () {
+      libraryFilterValue = this.value;
+      renderLibraryList();
+    });
+  }
+
+  function isExerciseIncomplete(e) {
+    return !e.category || !e.equipment || !e.muscles || !e.muscles.length;
   }
 
   function renderLibraryList() {
     var q = $('librarySearch').value.trim().toLowerCase();
-    var cat = $('libraryCategoryFilter').value;
     var list = exercisesCache.filter(function (e) {
       var matchesQ = !q || e.name.toLowerCase().indexOf(q) !== -1;
-      var matchesCat = !cat || e.category === cat;
-      return matchesQ && matchesCat;
+      var matchesFilter = true;
+      if (libraryFilterType && libraryFilterValue) {
+        if (libraryFilterType === 'equipment') matchesFilter = e.equipment === libraryFilterValue;
+        else if (libraryFilterType === 'category') matchesFilter = e.category === libraryFilterValue;
+        else matchesFilter = (e.muscles && e.muscles[0]) === libraryFilterValue;
+      }
+      return matchesQ && matchesFilter;
     }).sort(function (a, b) { return a.name.localeCompare(b.name); });
 
     var el = $('libraryList');
@@ -830,8 +882,8 @@
       return;
     }
     el.innerHTML = '<div class="card">' + list.map(function (e) {
-      return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '"><span class="name">' + escapeHtml(e.name) + '</span>' +
-        chipHtml(e.category) + '</div>';
+      var flag = isExerciseIncomplete(e) ? '<span title="Missing category, equipment, or muscles" style="margin-left:8px;">🚩</span>' : '';
+      return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '"><span class="name">' + escapeHtml(e.name) + '</span>' + flag + '</div>';
     }).join('') + '</div>';
 
     el.querySelectorAll('.exercise-row').forEach(function (row) {
@@ -843,7 +895,6 @@
   }
 
   $('librarySearch').addEventListener('input', renderLibraryList);
-  $('libraryCategoryFilter').addEventListener('change', renderLibraryList);
 
   var newExMuscleEditor = null;
 
@@ -1047,27 +1098,40 @@
     var el = $('quickAddForm');
     el.style.display = 'block';
     el.innerHTML = '<div class="card">' +
-      '<div class="field"><label for="quickAddName">Name</label>' +
+      '<div class="field"><label for="quickAddName">Name *</label>' +
       '<input type="text" id="quickAddName" value="' + escapeHtml(name) + '"></div>' +
-      '<div class="field" id="quickAddCategoryField">' + categorySelectHtml('quickAdd', '') + '</div>' +
       '<div class="field" id="quickAddEquipmentField">' + equipmentSelectHtml('quickAdd', '') + '</div>' +
-      '<p class="muted" style="margin:0 0 8px;">Add muscles worked later from the Library.</p>' +
+      '<button type="button" class="btn-sm" id="quickAddMoreToggle" style="margin-bottom:10px;">+ More options (category, muscles)</button>' +
+      '<div id="quickAddMoreFields" style="display:none;">' +
+        '<div class="field" id="quickAddCategoryField">' + categorySelectHtml('quickAdd', '') + '</div>' +
+        '<div class="field" id="quickAddMusclesField"><div id="quickAdd-muscles-editor"></div></div>' +
+      '</div>' +
       '<div class="modal-actions">' +
         '<button class="btn secondary" id="quickAddCancelBtn">Cancel</button>' +
         '<button class="btn" id="quickAddSaveBtn">Add &amp; Insert</button>' +
       '</div>' +
     '</div>';
-    wireCategorySelect('quickAdd');
     wireEquipmentSelect('quickAdd');
+    wireCategorySelect('quickAdd');
+    var quickAddMuscleEditor = createMuscleEditor('quickAdd', []);
+
+    $('quickAddMoreToggle').addEventListener('click', function () {
+      var box = $('quickAddMoreFields');
+      var show = box.style.display === 'none';
+      box.style.display = show ? 'block' : 'none';
+      this.textContent = show ? '− Hide options' : '+ More options (category, muscles)';
+    });
     $('quickAddCancelBtn').addEventListener('click', hideQuickAdd);
     $('quickAddSaveBtn').addEventListener('click', function () {
       var nm = $('quickAddName').value.trim();
-      var cat = readCategorySelect('quickAdd');
       var equip = readEquipmentSelect('quickAdd');
+      var cat = readCategorySelect('quickAdd');
+      var muscles = quickAddMuscleEditor.getSelected();
       if (!nm) { showToast('Name is required', true); return; }
+      if (!equip) { showToast('Equipment is required', true); return; }
 
       function doSave() {
-        apiPost('addExercise', { name: nm, category: cat, equipment: equip }).then(function (newEx) {
+        apiPost('addExercise', { name: nm, category: cat, equipment: equip, muscles: muscles }).then(function (newEx) {
           exercisesCache.push(newEx);
           addExerciseToSession(newEx.id);
           hideQuickAdd();
