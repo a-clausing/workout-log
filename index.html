@@ -53,6 +53,28 @@
   }
   .splash-screen.hide { opacity: 0; pointer-events: none; }
   .splash-logo { width: 120px; height: 120px; }
+
+  /* Library sub-tabs: Exercises / Workouts / Programs */
+  .lib-subnav {
+    display: flex; background: var(--card-soft); border-radius: var(--radius-pill);
+    padding: 4px; margin-bottom: 16px; gap: 4px;
+  }
+  .lib-subnav-btn {
+    flex: 1; text-align: center; padding: 10px 4px; border: none; background: none;
+    color: var(--text-dim); font-weight: 700; font-size: 14px; border-radius: var(--radius-pill); cursor: pointer;
+  }
+  .lib-subnav-btn.active { background: var(--accent); color: var(--accent-ink); }
+  .lib-tab-panel.swipe-anim { animation: libTabIn 0.18s ease; }
+  @keyframes libTabIn { from { opacity: 0.3; } to { opacity: 1; } }
+
+  .active-badge {
+    display: inline-block; font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: var(--radius-pill);
+    background: rgba(63,179,127,0.18); color: var(--ok, #3fb37f); text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .schedule-row {
+    display: grid; grid-template-columns: 56px 1fr; gap: 10px; align-items: center; padding: 6px 0;
+  }
+  .schedule-row .day-label { font-size: 13px; font-weight: 700; color: var(--text-dim); }
   .icon-btn {
     background: var(--card-soft); border: none; color: var(--text);
     border-radius: var(--radius-pill); width: 40px; height: 40px; font-size: 17px; cursor: pointer;
@@ -323,30 +345,64 @@
 
   <!-- LIBRARY SCREEN -->
   <section class="screen" id="screen-library">
-    <h2>Exercise Library</h2>
-    <div class="field">
-      <input type="text" id="librarySearch" placeholder="Search exercises...">
-    </div>
-    <div class="field">
-      <label class="muted" style="display:block; margin-bottom:6px;">Filter by</label>
-      <div class="tag-pill-grid" id="filterTypeChips"></div>
-    </div>
-    <div class="field" id="libraryFilterValueRow" style="display:none;"></div>
-    <button class="btn secondary block" id="toggleAddExerciseBtn" style="margin-bottom:14px;">+ Add Exercise</button>
+    <h2>Library</h2>
 
-    <div class="card" id="addExerciseForm" style="display:none;">
+    <div class="lib-subnav" id="librarySubnav">
+      <button class="lib-subnav-btn active" data-libtab="exercises">Exercises</button>
+      <button class="lib-subnav-btn" data-libtab="workouts">Workouts</button>
+      <button class="lib-subnav-btn" data-libtab="programs">Programs</button>
+    </div>
+
+    <!-- EXERCISES SUB-TAB -->
+    <div class="lib-tab-panel active" id="libTabExercises">
       <div class="field">
-        <label for="newExName">Name</label>
-        <input type="text" id="newExName" placeholder="e.g. Barbell Squat">
+        <input type="text" id="librarySearch" placeholder="Search exercises...">
       </div>
-      <div class="field" id="newExEquipmentField"></div>
-      <div class="field" id="newExCategoryField"></div>
-      <div class="field" id="newExMusclesField"></div>
-      <button class="btn block" id="submitNewExerciseBtn">Save Exercise</button>
+      <div class="field">
+        <label class="muted" style="display:block; margin-bottom:6px;">Filter by</label>
+        <div class="tag-pill-grid" id="filterTypeChips"></div>
+      </div>
+      <div class="field" id="libraryFilterValueRow" style="display:none;"></div>
+      <button class="btn secondary block" id="toggleAddExerciseBtn" style="margin-bottom:14px;">+ Add Exercise</button>
+
+      <div class="card" id="addExerciseForm" style="display:none;">
+        <div class="field">
+          <label for="newExName">Name</label>
+          <input type="text" id="newExName" placeholder="e.g. Barbell Squat">
+        </div>
+        <div class="field" id="newExEquipmentField"></div>
+        <div class="field" id="newExCategoryField"></div>
+        <div class="field" id="newExMusclesField"></div>
+        <button class="btn block" id="submitNewExerciseBtn">Save Exercise</button>
+      </div>
+
+      <p class="muted" style="margin-bottom:6px;">Tap an exercise to edit it.</p>
+      <div id="libraryList"></div>
     </div>
 
-    <p class="muted" style="margin-bottom:6px;">Tap an exercise to edit it.</p>
-    <div id="libraryList"></div>
+    <!-- WORKOUTS SUB-TAB (reusable templates — not logged sessions, those live in History) -->
+    <div class="lib-tab-panel" id="libTabWorkouts" style="display:none;">
+      <div class="field">
+        <input type="text" id="workoutTemplateSearch" placeholder="Search workouts...">
+      </div>
+      <button class="btn secondary block" id="toggleCreateWorkoutBtn" style="margin-bottom:14px;">+ Create Workout</button>
+
+      <div class="card" id="createWorkoutForm" style="display:none;"></div>
+
+      <p class="muted" style="margin-bottom:6px;">Tap a workout to view or edit it.</p>
+      <div id="workoutTemplateList"></div>
+    </div>
+
+    <!-- PROGRAMS SUB-TAB -->
+    <div class="lib-tab-panel" id="libTabPrograms" style="display:none;">
+      <h3 style="margin-top:0;">Your Programs</h3>
+      <button class="btn secondary block" id="toggleCreateProgramBtn" style="margin-bottom:14px;">+ Create Program</button>
+
+      <div class="card" id="createProgramForm" style="display:none;"></div>
+
+      <p class="muted" style="margin-bottom:6px;">Tap a program to view or edit it.</p>
+      <div id="programList"></div>
+    </div>
   </section>
 
   <!-- LOG WORKOUT SCREEN -->
@@ -544,7 +600,7 @@
       b.classList.toggle('active', b.dataset.screen === name);
     });
 
-    if (name === 'library') loadLibrary();
+    if (name === 'library') switchLibTab(currentLibTab);
     if (name === 'history') loadHistory();
   }
 
@@ -1051,6 +1107,378 @@
           closeModal(backdrop);
           showToast('Exercise deleted');
           loadLibrary();
+        }).catch(function (err) { showToast(err.message, true); });
+      });
+    });
+  }
+
+  // ---------- Library sub-tabs: Exercises / Workouts / Programs ----------
+  var LIB_TABS = ['exercises', 'workouts', 'programs'];
+  var currentLibTab = 'exercises';
+
+  function switchLibTab(tab) {
+    currentLibTab = tab;
+    document.querySelectorAll('.lib-subnav-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.libtab === tab); });
+    document.querySelectorAll('.lib-tab-panel').forEach(function (p) { p.style.display = 'none'; p.classList.remove('swipe-anim'); });
+    var panel = $('libTab' + tab.charAt(0).toUpperCase() + tab.slice(1));
+    panel.style.display = 'block';
+    panel.classList.add('swipe-anim');
+    if (tab === 'exercises') loadLibrary();
+    else if (tab === 'workouts') loadWorkoutTemplates();
+    else if (tab === 'programs') loadPrograms();
+  }
+
+  document.querySelectorAll('.lib-subnav-btn').forEach(function (b) {
+    b.addEventListener('click', function () { switchLibTab(b.dataset.libtab); });
+  });
+
+  // Long swipe left/right on the Library screen also switches sub-tabs.
+  (function () {
+    var startX = 0, startY = 0, tracking = false;
+    var libSection = $('screen-library');
+    libSection.addEventListener('pointerdown', function (ev) {
+      startX = ev.clientX; startY = ev.clientY; tracking = true;
+    });
+    libSection.addEventListener('pointerup', function (ev) {
+      if (!tracking) return;
+      tracking = false;
+      var dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      var idx = LIB_TABS.indexOf(currentLibTab);
+      if (dx < 0 && idx < LIB_TABS.length - 1) switchLibTab(LIB_TABS[idx + 1]);
+      else if (dx > 0 && idx > 0) switchLibTab(LIB_TABS[idx - 1]);
+    });
+  })();
+
+  // ---------- Workouts (Library sub-tab): reusable templates, not logged sessions ----------
+  var workoutTemplatesCache = [];
+  var workoutBuilderInstance = null;
+
+  function loadWorkoutTemplates() {
+    apiGet('getWorkoutTemplates').then(function (data) {
+      workoutTemplatesCache = data;
+      renderWorkoutTemplateList();
+    }).catch(function (err) { showToast(err.message, true); });
+  }
+
+  function estimateWorkoutDuration_(exerciseCount) {
+    return exerciseCount * 8; // rough heuristic: ~8 min per exercise, used only when no manual estimate is set
+  }
+
+  function renderWorkoutTemplateList() {
+    var q = $('workoutTemplateSearch').value.trim().toLowerCase();
+    var list = workoutTemplatesCache.filter(function (w) {
+      return !q || w.name.toLowerCase().indexOf(q) !== -1;
+    }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+    var el = $('workoutTemplateList');
+    if (!list.length) { el.innerHTML = '<div class="empty-state">No workouts yet.</div>'; return; }
+    el.innerHTML = '<div class="card">' + list.map(function (w) {
+      var dur = w.durationMinutes || estimateWorkoutDuration_(w.exerciseCount);
+      return '<div class="exercise-row" data-id="' + escapeHtml(w.id) + '">' +
+        '<span class="name">' + escapeHtml(w.name) + '</span>' +
+        '<span class="muted" style="text-align:right;">' + w.exerciseCount + ' exercise' + (w.exerciseCount === 1 ? '' : 's') + ' · ~' + dur + ' min</span>' +
+      '</div>';
+    }).join('') + '</div>';
+
+    el.querySelectorAll('.exercise-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var w = workoutTemplatesCache.find(function (x) { return x.id === row.dataset.id; });
+        if (w) openWorkoutTemplateDetail(w);
+      });
+    });
+  }
+  $('workoutTemplateSearch').addEventListener('input', renderWorkoutTemplateList);
+
+  // Small self-contained "which exercises + sets/reps" builder, shared by create and edit.
+  function createWorkoutBuilder(idPrefix, initialItems) {
+    var items = (initialItems || []).map(function (it) {
+      return { exerciseId: it.exerciseId, name: it.name, sets: it.sets, reps: it.reps };
+    });
+
+    function render() {
+      var container = $(idPrefix + '-wb-list');
+      if (!container) return;
+      if (!items.length) {
+        container.innerHTML = '<p class="muted" style="margin:8px 0;">No exercises added yet.</p>';
+        return;
+      }
+      container.innerHTML = items.map(function (it, idx) {
+        return '<div class="set-table-row">' +
+          '<span class="cell-exercise">' + escapeHtml(it.name) + '</span>' +
+          '<input type="number" class="cell-num" placeholder="sets" data-wb-field="sets" data-idx="' + idx + '" value="' + (it.sets != null ? it.sets : '') + '">' +
+          '<input type="number" class="cell-num" placeholder="reps" data-wb-field="reps" data-idx="' + idx + '" value="' + (it.reps != null ? it.reps : '') + '">' +
+          '<button class="del" data-wb-remove="' + idx + '">✕</button>' +
+        '</div>';
+      }).join('');
+      container.querySelectorAll('[data-wb-field]').forEach(function (input) {
+        input.addEventListener('change', function () {
+          var idx = Number(input.dataset.idx);
+          items[idx][input.dataset.wbField] = input.value === '' ? null : Number(input.value);
+        });
+      });
+      container.querySelectorAll('[data-wb-remove]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          items.splice(Number(btn.dataset.wbRemove), 1);
+          render();
+        });
+      });
+    }
+
+    render();
+    return {
+      addExercise: function (exerciseId) {
+        var ex = exercisesCache.find(function (e) { return e.id === exerciseId; });
+        if (!ex) return;
+        items.push({ exerciseId: ex.id, name: ex.name, sets: null, reps: null });
+        render();
+      },
+      getItems: function () { return items.slice(); }
+    };
+  }
+
+  $('toggleCreateWorkoutBtn').addEventListener('click', function () {
+    var f = $('createWorkoutForm');
+    var show = f.style.display === 'none' || !f.innerHTML;
+    if (show) { renderWorkoutTemplateForm(null); f.style.display = 'block'; }
+    else { f.style.display = 'none'; f.innerHTML = ''; }
+  });
+
+  function renderWorkoutTemplateForm(existing) {
+    var f = $('createWorkoutForm');
+    f.style.display = 'block';
+    f.innerHTML =
+      '<div class="field"><label for="wtName">Name</label>' +
+      '<input type="text" id="wtName" placeholder="e.g. Push A" value="' + (existing ? escapeHtml(existing.name) : '') + '"></div>' +
+      '<div class="field"><label for="wtDuration">Estimated Duration (minutes, optional)</label>' +
+      '<input type="number" id="wtDuration" placeholder="e.g. 55" value="' + (existing && existing.durationMinutes ? existing.durationMinutes : '') + '"></div>' +
+      '<div class="field">' +
+        '<label for="wtExerciseSearch">Add exercises</label>' +
+        '<input type="text" id="wtExerciseSearch" placeholder="Search exercises...">' +
+        '<div class="search-results" id="wtExerciseSearchResults"></div>' +
+      '</div>' +
+      '<div class="set-table-row head"><span>Exercise</span><span>Sets</span><span>Reps</span><span></span></div>' +
+      '<div id="wt-wb-list"></div>' +
+      '<div class="modal-actions" style="margin-top:12px;">' +
+        '<button class="btn secondary" id="wtCancelBtn">Cancel</button>' +
+        '<button class="btn" id="wtSaveBtn">' + (existing ? 'Save Changes' : 'Create Workout') + '</button>' +
+      '</div>';
+
+    workoutBuilderInstance = createWorkoutBuilder('wt', existing ? existing.exercises : []);
+
+    if (!exercisesCache.length) {
+      apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
+    }
+
+    $('wtExerciseSearch').addEventListener('input', function () {
+      var q = this.value.trim().toLowerCase();
+      var box = $('wtExerciseSearchResults');
+      if (!q) { box.innerHTML = ''; return; }
+      var matches = exercisesCache.filter(function (e) { return e.name.toLowerCase().indexOf(q) !== -1; }).slice(0, 20);
+      box.innerHTML = matches.length
+        ? matches.map(function (e) {
+            return '<div class="exercise-row" data-id="' + escapeHtml(e.id) + '"><span class="name">' + escapeHtml(e.name) + '</span>' + equipmentChipHtml(e.equipment) + '</div>';
+          }).join('')
+        : '<div class="muted" style="padding:8px 0;">No matches</div>';
+      box.querySelectorAll('.exercise-row[data-id]').forEach(function (row) {
+        row.addEventListener('click', function () {
+          workoutBuilderInstance.addExercise(row.dataset.id);
+          $('wtExerciseSearch').value = '';
+          box.innerHTML = '';
+        });
+      });
+    });
+
+    $('wtCancelBtn').addEventListener('click', function () { f.style.display = 'none'; f.innerHTML = ''; });
+    $('wtSaveBtn').addEventListener('click', function () {
+      var name = $('wtName').value.trim();
+      var duration = $('wtDuration').value ? Number($('wtDuration').value) : null;
+      var items = workoutBuilderInstance.getItems();
+      if (!name) { showToast('Name is required', true); return; }
+      if (!items.length) { showToast('Add at least one exercise', true); return; }
+
+      var payload = {
+        name: name,
+        exercises: items.map(function (it) { return { exerciseId: it.exerciseId, sets: it.sets, reps: it.reps }; }),
+        durationMinutes: duration
+      };
+      var action = existing ? 'updateWorkoutTemplate' : 'addWorkoutTemplate';
+      if (existing) payload.id = existing.id;
+
+      apiPost(action, payload).then(function () {
+        f.style.display = 'none'; f.innerHTML = '';
+        showToast(existing ? 'Workout updated' : 'Workout created');
+        loadWorkoutTemplates();
+      }).catch(function (err) { showToast(err.message, true); });
+    });
+  }
+
+  function openWorkoutTemplateDetail(w) {
+    var dur = w.durationMinutes || estimateWorkoutDuration_(w.exerciseCount);
+    var body = '<p class="muted">' + w.exerciseCount + ' exercise' + (w.exerciseCount === 1 ? '' : 's') + ' · ~' + dur + ' min</p>' +
+      '<div class="set-table-row head"><span>Exercise</span><span>Sets</span><span>Reps</span><span></span></div>' +
+      w.exercises.map(function (it) {
+        return '<div class="set-table-row"><span class="cell-exercise">' + escapeHtml(it.name) + '</span>' +
+          '<span style="text-align:center;">' + (it.sets != null ? it.sets : '—') + '</span>' +
+          '<span style="text-align:center;">' + (it.reps != null ? it.reps : '—') + '</span><span></span></div>';
+      }).join('') +
+      '<div class="modal-actions">' +
+        '<button class="btn secondary" id="wtDetailEditBtn">Edit</button>' +
+        '<button class="btn danger" id="wtDetailDeleteBtn">Delete</button>' +
+      '</div>';
+
+    var backdrop = showModal(w.name, body, true);
+    backdrop.querySelector('#wtDetailEditBtn').addEventListener('click', function () {
+      closeModal(backdrop);
+      renderWorkoutTemplateForm(w);
+    });
+    backdrop.querySelector('#wtDetailDeleteBtn').addEventListener('click', function () {
+      var confirmBody = '<p>Delete "' + escapeHtml(w.name) + '"? This can\'t be undone.</p>' +
+        '<div class="modal-actions">' +
+          '<button class="btn secondary" id="wtDelNoBtn">Cancel</button>' +
+          '<button class="btn danger" id="wtDelYesBtn">Delete</button>' +
+        '</div>';
+      var confirmBackdrop = showModal('Delete Workout', confirmBody, true);
+      confirmBackdrop.querySelector('#wtDelNoBtn').addEventListener('click', function () { closeModal(confirmBackdrop); });
+      confirmBackdrop.querySelector('#wtDelYesBtn').addEventListener('click', function () {
+        apiPost('deleteWorkoutTemplate', { id: w.id }).then(function () {
+          closeModal(confirmBackdrop);
+          closeModal(backdrop);
+          showToast('Workout deleted');
+          loadWorkoutTemplates();
+        }).catch(function (err) { showToast(err.message, true); });
+      });
+    });
+  }
+
+  // ---------- Programs (Library sub-tab): Workout templates arranged on a weekly schedule ----------
+  var SCHEDULE_DAYS_CLIENT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var programsCache = [];
+
+  function ensureWorkoutTemplatesLoaded() {
+    if (workoutTemplatesCache.length) return Promise.resolve();
+    return apiGet('getWorkoutTemplates').then(function (data) { workoutTemplatesCache = data; });
+  }
+
+  function loadPrograms() {
+    apiGet('getPrograms').then(function (data) {
+      programsCache = data;
+      renderProgramList();
+    }).catch(function (err) { showToast(err.message, true); });
+  }
+
+  function renderProgramList() {
+    var list = programsCache.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+    var el = $('programList');
+    if (!list.length) { el.innerHTML = '<div class="empty-state">No programs yet.</div>'; return; }
+    el.innerHTML = '<div class="card">' + list.map(function (p) {
+      var durLabel = p.durationWeeks ? (p.durationWeeks + ' week' + (p.durationWeeks === 1 ? '' : 's')) : 'No set duration';
+      return '<div class="exercise-row" data-id="' + escapeHtml(p.id) + '" style="align-items:flex-start;">' +
+        '<div><div class="name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="muted">' + p.workoutCount + ' workout' + (p.workoutCount === 1 ? '' : 's') + ' · ' + durLabel + '</div></div>' +
+        (p.active ? '<span class="active-badge">Active</span>' : '') +
+      '</div>';
+    }).join('') + '</div>';
+
+    el.querySelectorAll('.exercise-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var p = programsCache.find(function (x) { return x.id === row.dataset.id; });
+        if (p) openProgramDetail(p);
+      });
+    });
+  }
+
+  $('toggleCreateProgramBtn').addEventListener('click', function () {
+    var f = $('createProgramForm');
+    var show = f.style.display === 'none' || !f.innerHTML;
+    if (show) {
+      ensureWorkoutTemplatesLoaded().then(function () { renderProgramForm(null); f.style.display = 'block'; });
+    } else {
+      f.style.display = 'none'; f.innerHTML = '';
+    }
+  });
+
+  function renderProgramForm(existing) {
+    var f = $('createProgramForm');
+    f.style.display = 'block';
+    var scheduleMap = {};
+    if (existing) existing.schedule.forEach(function (s) { scheduleMap[s.day] = s.workoutId; });
+
+    var dayRows = SCHEDULE_DAYS_CLIENT.map(function (day) {
+      var options = '<option value="">Rest</option>' + workoutTemplatesCache.map(function (w) {
+        return '<option value="' + escapeHtml(w.id) + '"' + (scheduleMap[day] === w.id ? ' selected' : '') + '>' + escapeHtml(w.name) + '</option>';
+      }).join('');
+      return '<div class="schedule-row"><span class="day-label">' + day + '</span><select data-day="' + day + '">' + options + '</select></div>';
+    }).join('');
+
+    f.innerHTML =
+      '<div class="field"><label for="pgName">Name</label>' +
+      '<input type="text" id="pgName" placeholder="e.g. 4-Day Upper/Lower" value="' + (existing ? escapeHtml(existing.name) : '') + '"></div>' +
+      '<div class="field"><label for="pgDuration">Duration (weeks)</label>' +
+      '<input type="number" id="pgDuration" placeholder="e.g. 8" value="' + (existing && existing.durationWeeks ? existing.durationWeeks : '') + '"></div>' +
+      '<div class="field"><label>Weekly Schedule</label>' + dayRows + '</div>' +
+      '<div class="field" style="display:flex; align-items:center; gap:8px;">' +
+        '<input type="checkbox" id="pgActive" style="width:auto;"' + (existing && existing.active ? ' checked' : '') + '>' +
+        '<label for="pgActive" style="margin:0;">Set as active program</label>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn secondary" id="pgCancelBtn">Cancel</button>' +
+        '<button class="btn" id="pgSaveBtn">' + (existing ? 'Save Changes' : 'Create Program') + '</button>' +
+      '</div>';
+
+    $('pgCancelBtn').addEventListener('click', function () { f.style.display = 'none'; f.innerHTML = ''; });
+    $('pgSaveBtn').addEventListener('click', function () {
+      var name = $('pgName').value.trim();
+      var duration = $('pgDuration').value ? Number($('pgDuration').value) : null;
+      var active = $('pgActive').checked;
+      if (!name) { showToast('Name is required', true); return; }
+
+      var schedule = Array.from(f.querySelectorAll('select[data-day]')).map(function (sel) {
+        return { day: sel.dataset.day, workoutId: sel.value };
+      });
+      var payload = { name: name, durationWeeks: duration, schedule: schedule, active: active };
+      var action = existing ? 'updateProgram' : 'addProgram';
+      if (existing) payload.id = existing.id;
+
+      apiPost(action, payload).then(function () {
+        f.style.display = 'none'; f.innerHTML = '';
+        showToast(existing ? 'Program updated' : 'Program created');
+        loadPrograms();
+      }).catch(function (err) { showToast(err.message, true); });
+    });
+  }
+
+  function openProgramDetail(p) {
+    var durLabel = p.durationWeeks ? (p.durationWeeks + ' week' + (p.durationWeeks === 1 ? '' : 's')) : 'No set duration';
+    var body = '<p class="muted">' + p.workoutCount + ' workout' + (p.workoutCount === 1 ? '' : 's') + ' · ' + durLabel + (p.active ? ' · <span class="active-badge">Active</span>' : '') + '</p>' +
+      p.schedule.map(function (s) {
+        return '<div class="schedule-row"><span class="day-label">' + s.day + '</span><span>' +
+          (s.workoutId ? escapeHtml(s.workoutName) : '<span class="muted">Rest</span>') + '</span></div>';
+      }).join('') +
+      '<div class="modal-actions">' +
+        '<button class="btn secondary" id="pgDetailEditBtn">Edit</button>' +
+        '<button class="btn danger" id="pgDetailDeleteBtn">Delete</button>' +
+      '</div>';
+
+    var backdrop = showModal(p.name, body, true);
+    backdrop.querySelector('#pgDetailEditBtn').addEventListener('click', function () {
+      closeModal(backdrop);
+      ensureWorkoutTemplatesLoaded().then(function () { renderProgramForm(p); });
+    });
+    backdrop.querySelector('#pgDetailDeleteBtn').addEventListener('click', function () {
+      var confirmBody = '<p>Delete "' + escapeHtml(p.name) + '"? This can\'t be undone.</p>' +
+        '<div class="modal-actions">' +
+          '<button class="btn secondary" id="pgDelNoBtn">Cancel</button>' +
+          '<button class="btn danger" id="pgDelYesBtn">Delete</button>' +
+        '</div>';
+      var confirmBackdrop = showModal('Delete Program', confirmBody, true);
+      confirmBackdrop.querySelector('#pgDelNoBtn').addEventListener('click', function () { closeModal(confirmBackdrop); });
+      confirmBackdrop.querySelector('#pgDelYesBtn').addEventListener('click', function () {
+        apiPost('deleteProgram', { id: p.id }).then(function () {
+          closeModal(confirmBackdrop);
+          closeModal(backdrop);
+          showToast('Program deleted');
+          loadPrograms();
         }).catch(function (err) { showToast(err.message, true); });
       });
     });
