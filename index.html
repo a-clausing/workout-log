@@ -75,6 +75,21 @@
     display: grid; grid-template-columns: 56px 1fr; gap: 10px; align-items: center; padding: 6px 0;
   }
   .schedule-row .day-label { font-size: 13px; font-weight: 700; color: var(--text-dim); }
+
+  .log-summary-btn {
+    display: flex; align-items: center; justify-content: space-between; width: 100%;
+    text-align: left; background: var(--card-soft); border: none; border-radius: var(--radius-md);
+    padding: 12px 14px; color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;
+    margin-bottom: 14px;
+  }
+  .log-summary-btn::after { content: '✏️ Edit'; color: var(--accent); font-size: 12px; font-weight: 700; }
+  .tmpl-pick-row {
+    display: flex; align-items: center; justify-content: space-between; padding: 12px 4px;
+    border-bottom: 1px solid var(--card-border); cursor: pointer;
+  }
+  .tmpl-pick-row:last-child { border-bottom: none; }
+  .tmpl-pick-row.selected { background: var(--card-soft); border-radius: var(--radius-md); }
+  .cell-num.needs-weight { border-color: var(--accent); background: rgba(47,111,238,0.08); }
   .icon-btn {
     background: var(--card-soft); border: none; color: var(--text);
     border-radius: var(--radius-pill); width: 40px; height: 40px; font-size: 17px; cursor: pointer;
@@ -413,21 +428,38 @@
       <button class="btn block" id="startWorkoutBtn">Log Workout</button>
     </div>
 
+    <!-- Date/name (and optionally: pick a saved workout to pre-fill) before entering the logging screen -->
+    <div id="logSetupView" style="display:none;">
+      <h2 id="logSetupHeading">Log Workout</h2>
+
+      <div class="field">
+        <label for="logSetupDateInput">Date</label>
+        <input type="date" id="logSetupDateInput">
+      </div>
+
+      <div class="field">
+        <label for="logSetupNameInput">Workout Name</label>
+        <input type="text" id="logSetupNameInput" placeholder="Workout">
+      </div>
+
+      <div class="field" id="logSetupTemplateSection">
+        <label class="muted" style="display:block; margin-bottom:6px;">Or start from a saved workout</label>
+        <div id="logSetupTemplateList"></div>
+      </div>
+
+      <div class="row">
+        <button class="btn secondary" id="logSetupCancelBtn">Cancel</button>
+        <button class="btn" id="logSetupConfirmBtn">Start Workout</button>
+      </div>
+    </div>
+
     <div id="logActiveView" style="display:none;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <h2 id="logHeading">Log Workout</h2>
         <button class="btn-sm danger" id="discardWorkoutBtn">Discard</button>
       </div>
 
-      <div class="field">
-        <label for="sessionDateInput">Date</label>
-        <input type="date" id="sessionDateInput">
-      </div>
-
-      <div class="field">
-        <label for="sessionNameInput">Workout Name</label>
-        <input type="text" id="sessionNameInput" placeholder="Workout">
-      </div>
+      <button type="button" class="log-summary-btn" id="logActiveSummaryBtn"></button>
 
       <div id="linkBar" style="display:none; margin-bottom:12px;">
         <button class="btn secondary" id="linkSelectedBtn">Link as Superset</button>
@@ -1161,8 +1193,8 @@
     }).catch(function (err) { showToast(err.message, true); });
   }
 
-  function estimateWorkoutDuration_(exerciseCount) {
-    return exerciseCount * 8; // rough heuristic: ~8 min per exercise, used only when no manual estimate is set
+  function estimateWorkoutDuration_(totalSets) {
+    return Math.round(totalSets * 3); // rough heuristic: ~3 min per set (incl. rest), used only when no manual estimate is set
   }
 
   function renderWorkoutTemplateList() {
@@ -1174,7 +1206,7 @@
     var el = $('workoutTemplateList');
     if (!list.length) { el.innerHTML = '<div class="empty-state">No workouts yet.</div>'; return; }
     el.innerHTML = '<div class="card">' + list.map(function (w) {
-      var dur = w.durationMinutes || estimateWorkoutDuration_(w.exerciseCount);
+      var dur = w.durationMinutes || estimateWorkoutDuration_(w.totalSets);
       return '<div class="exercise-row" data-id="' + escapeHtml(w.id) + '">' +
         '<span class="name">' + escapeHtml(w.name) + '</span>' +
         '<span class="muted" style="text-align:right;">' + w.exerciseCount + ' exercise' + (w.exerciseCount === 1 ? '' : 's') + ' · ~' + dur + ' min</span>' +
@@ -1191,10 +1223,24 @@
   $('workoutTemplateSearch').addEventListener('input', renderWorkoutTemplateList);
 
   // Small self-contained "which exercises + sets/reps" builder, shared by create and edit.
+  // Same look/feel as logging a workout: each exercise lists its sets one after another,
+  // reps only (no weight — this is a template, not a performed session).
   function createWorkoutBuilder(idPrefix, initialItems) {
     var items = (initialItems || []).map(function (it) {
-      return { exerciseId: it.exerciseId, name: it.name, sets: it.sets, reps: it.reps };
+      return { exerciseId: it.exerciseId, name: it.name, setsReps: (it.setsReps || []).slice() };
     });
+    var pendingReps = {}; // exIdx -> current (uncommitted) reps entry value, persisted across re-renders
+
+    function addSetToExercise(exIdx) {
+      var input = document.getElementById(idPrefix + '-wb-entry-' + exIdx);
+      var v = input ? parseInt(input.value, 10) : NaN;
+      if (isNaN(v)) { showToast('Enter reps', true); return; }
+      items[exIdx].setsReps.push(v);
+      delete pendingReps[exIdx];
+      render();
+      var newInput = document.getElementById(idPrefix + '-wb-entry-' + exIdx);
+      if (newInput) newInput.focus();
+    }
 
     function render() {
       var container = $(idPrefix + '-wb-list');
@@ -1203,25 +1249,62 @@
         container.innerHTML = '<p class="muted" style="margin:8px 0;">No exercises added yet.</p>';
         return;
       }
-      container.innerHTML = items.map(function (it, idx) {
-        return '<div class="set-table-row">' +
-          '<span class="cell-exercise">' + escapeHtml(it.name) + '</span>' +
-          '<input type="number" class="cell-num" placeholder="sets" data-wb-field="sets" data-idx="' + idx + '" value="' + (it.sets != null ? it.sets : '') + '">' +
-          '<input type="number" class="cell-num" placeholder="reps" data-wb-field="reps" data-idx="' + idx + '" value="' + (it.reps != null ? it.reps : '') + '">' +
-          '<button class="del" data-wb-remove="' + idx + '">✕</button>' +
+      container.innerHTML = items.map(function (it, exIdx) {
+        var setsHtml = it.setsReps.map(function (reps, setIdx) {
+          return '<div class="set-table-row">' +
+            '<span class="cell-exercise">Set ' + (setIdx + 1) + '</span>' +
+            '<input type="number" inputmode="numeric" class="cell-num" value="' + escapeHtml(reps) + '" data-wb-edit-ex="' + exIdx + '" data-wb-edit-set="' + setIdx + '">' +
+            '<span></span>' +
+            '<button class="del" data-wb-del-ex="' + exIdx + '" data-wb-del-set="' + setIdx + '">✕</button>' +
+          '</div>';
+        }).join('');
+        var entryVal = pendingReps[exIdx] !== undefined ? pendingReps[exIdx] : '';
+        var entryRow = '<div class="set-table-row">' +
+          '<span class="cell-exercise">Set ' + (it.setsReps.length + 1) + '</span>' +
+          '<input type="number" inputmode="numeric" class="cell-num entry-num" placeholder="reps" id="' + idPrefix + '-wb-entry-' + exIdx + '" data-wb-entry-ex="' + exIdx + '" value="' + escapeHtml(entryVal) + '">' +
+          '<span></span><span></span>' +
+        '</div>' +
+        '<button type="button" class="add-set-row-btn" data-wb-add-ex="' + exIdx + '">+ Add Set</button>';
+
+        return '<div class="card" style="margin-bottom:10px; padding:12px;">' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">' +
+            '<span class="name">' + escapeHtml(it.name) + '</span>' +
+            '<button class="remove-x" data-wb-remove-ex="' + exIdx + '">✕</button>' +
+          '</div>' +
+          '<div class="set-table-row head"><span>Set</span><span>Reps</span><span></span><span></span></div>' +
+          setsHtml + entryRow +
         '</div>';
       }).join('');
-      container.querySelectorAll('[data-wb-field]').forEach(function (input) {
+
+      container.querySelectorAll('[data-wb-edit-ex]').forEach(function (input) {
         input.addEventListener('change', function () {
-          var idx = Number(input.dataset.idx);
-          items[idx][input.dataset.wbField] = input.value === '' ? null : Number(input.value);
+          var v = parseInt(input.value, 10);
+          if (!isNaN(v)) items[Number(input.dataset.wbEditEx)].setsReps[Number(input.dataset.wbEditSet)] = v;
         });
+        input.addEventListener('focus', function () { input.select(); });
       });
-      container.querySelectorAll('[data-wb-remove]').forEach(function (btn) {
+      container.querySelectorAll('[data-wb-del-ex]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          items.splice(Number(btn.dataset.wbRemove), 1);
+          items[Number(btn.dataset.wbDelEx)].setsReps.splice(Number(btn.dataset.wbDelSet), 1);
           render();
         });
+      });
+      container.querySelectorAll('[data-wb-remove-ex]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          items.splice(Number(btn.dataset.wbRemoveEx), 1);
+          pendingReps = {}; // exercise indices shift on removal; simplest to just drop any in-progress entries
+          render();
+        });
+      });
+      container.querySelectorAll('[data-wb-entry-ex]').forEach(function (input) {
+        input.addEventListener('input', function () { pendingReps[input.dataset.wbEntryEx] = input.value; });
+        input.addEventListener('focus', function () { input.select(); });
+        input.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); addSetToExercise(Number(input.dataset.wbEntryEx)); }
+        });
+      });
+      container.querySelectorAll('[data-wb-add-ex]').forEach(function (btn) {
+        btn.addEventListener('click', function () { addSetToExercise(Number(btn.dataset.wbAddEx)); });
       });
     }
 
@@ -1230,10 +1313,22 @@
       addExercise: function (exerciseId) {
         var ex = exercisesCache.find(function (e) { return e.id === exerciseId; });
         if (!ex) return;
-        items.push({ exerciseId: ex.id, name: ex.name, sets: null, reps: null });
+        items.push({ exerciseId: ex.id, name: ex.name, setsReps: [] });
         render();
       },
-      getItems: function () { return items.slice(); }
+      // Sweeps any typed-but-unconfirmed reps entries too, same rule as logging a workout:
+      // whatever's visible gets saved, you don't have to tap "+ Add Set" first.
+      getItems: function () {
+        items.forEach(function (it, exIdx) {
+          var val = pendingReps[exIdx];
+          if (val !== undefined && val !== '') {
+            var n = parseInt(val, 10);
+            if (!isNaN(n)) it.setsReps.push(n);
+          }
+        });
+        pendingReps = {};
+        return items.map(function (it) { return { exerciseId: it.exerciseId, name: it.name, setsReps: it.setsReps.slice() }; });
+      }
     };
   }
 
@@ -1257,7 +1352,6 @@
         '<input type="text" id="wtExerciseSearch" placeholder="Search exercises...">' +
         '<div class="search-results" id="wtExerciseSearchResults"></div>' +
       '</div>' +
-      '<div class="set-table-row head"><span>Exercise</span><span>Sets</span><span>Reps</span><span></span></div>' +
       '<div id="wt-wb-list"></div>' +
       '<div class="modal-actions" style="margin-top:12px;">' +
         '<button class="btn secondary" id="wtCancelBtn">Cancel</button>' +
@@ -1299,7 +1393,7 @@
 
       var payload = {
         name: name,
-        exercises: items.map(function (it) { return { exerciseId: it.exerciseId, sets: it.sets, reps: it.reps }; }),
+        exercises: items.map(function (it) { return { exerciseId: it.exerciseId, setsReps: it.setsReps }; }),
         durationMinutes: duration
       };
       var action = existing ? 'updateWorkoutTemplate' : 'addWorkoutTemplate';
@@ -1314,13 +1408,16 @@
   }
 
   function openWorkoutTemplateDetail(w) {
-    var dur = w.durationMinutes || estimateWorkoutDuration_(w.exerciseCount);
+    var dur = w.durationMinutes || estimateWorkoutDuration_(w.totalSets);
     var body = '<p class="muted">' + w.exerciseCount + ' exercise' + (w.exerciseCount === 1 ? '' : 's') + ' · ~' + dur + ' min</p>' +
-      '<div class="set-table-row head"><span>Exercise</span><span>Sets</span><span>Reps</span><span></span></div>' +
       w.exercises.map(function (it) {
-        return '<div class="set-table-row"><span class="cell-exercise">' + escapeHtml(it.name) + '</span>' +
-          '<span style="text-align:center;">' + (it.sets != null ? it.sets : '—') + '</span>' +
-          '<span style="text-align:center;">' + (it.reps != null ? it.reps : '—') + '</span><span></span></div>';
+        var setsHtml = it.setsReps.length
+          ? it.setsReps.map(function (reps, idx) {
+              return '<div class="set-table-row"><span>Set ' + (idx + 1) + '</span><span>' + escapeHtml(reps) + ' reps</span><span></span><span></span></div>';
+            }).join('')
+          : '<p class="muted" style="margin:4px 0;">No sets prescribed.</p>';
+        return '<div class="block-card"><div class="name">' + escapeHtml(it.name) + '</div>' +
+          '<div class="set-table">' + setsHtml + '</div></div>';
       }).join('') +
       '<div class="modal-actions">' +
         '<button class="btn secondary" id="wtDetailEditBtn">Edit</button>' +
@@ -1485,36 +1582,165 @@
   }
 
   // ---------- Log Workout ----------
-  function startNewSession() {
-    session = { id: null, date: todayISO(), name: '', items: [], sets: [] };
+  var logSetupCallback = null;
+  var logSetupCancelHandler = null;
+  var logSetupSelectedTemplateId = null;
+  var workoutTemplatesLoaded = false;
+
+  function ensureWorkoutTemplatesLoadedForSetup() {
+    if (workoutTemplatesLoaded) return Promise.resolve();
+    return apiGet('getWorkoutTemplates').then(function (data) {
+      workoutTemplatesCache = data;
+      workoutTemplatesLoaded = true;
+    }).catch(function () {}); // non-fatal — the picker just stays empty
+  }
+
+  function renderLogSetupTemplateList() {
+    var el = $('logSetupTemplateList');
+    if (!workoutTemplatesCache.length) {
+      el.innerHTML = '<p class="muted" style="margin:4px 0;">No saved workouts yet.</p>';
+      return;
+    }
+    el.innerHTML = workoutTemplatesCache.map(function (t) {
+      var selected = logSetupSelectedTemplateId === t.id;
+      return '<div class="tmpl-pick-row' + (selected ? ' selected' : '') + '" data-tmpl-id="' + escapeHtml(t.id) + '">' +
+        '<span class="name">' + escapeHtml(t.name) + '</span>' +
+        '<span class="muted">' + t.exerciseCount + ' exercise' + (t.exerciseCount === 1 ? '' : 's') + '</span>' +
+      '</div>';
+    }).join('');
+    el.querySelectorAll('[data-tmpl-id]').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var wasSelected = logSetupSelectedTemplateId === row.dataset.tmplId;
+        logSetupSelectedTemplateId = wasSelected ? null : row.dataset.tmplId;
+        // Convenience: fill in the name field from the template, but only if the user hasn't typed one.
+        if (!wasSelected && !$('logSetupNameInput').value.trim()) {
+          var tmpl = workoutTemplatesCache.find(function (t) { return t.id === logSetupSelectedTemplateId; });
+          if (tmpl) $('logSetupNameInput').value = tmpl.name;
+        }
+        renderLogSetupTemplateList();
+      });
+    });
+  }
+
+  // opts: { heading, date, name, showTemplatePicker, buttonLabel, onConfirm(date,name,templateId), onCancel }
+  function openLogSetup(opts) {
+    $('logSetupHeading').textContent = opts.heading || 'Log Workout';
+    $('logSetupDateInput').value = opts.date;
+    $('logSetupNameInput').value = opts.name || '';
+    $('logSetupConfirmBtn').textContent = opts.buttonLabel;
+    logSetupCallback = opts.onConfirm;
+    logSetupCancelHandler = opts.onCancel || function () {
+      $('logSetupView').style.display = 'none';
+      $('logStartView').style.display = 'block';
+    };
+    logSetupSelectedTemplateId = null;
+
+    $('logSetupTemplateSection').style.display = opts.showTemplatePicker ? 'block' : 'none';
+    if (opts.showTemplatePicker) {
+      $('logSetupTemplateList').innerHTML = '<p class="muted">Loading…</p>';
+      ensureWorkoutTemplatesLoadedForSetup().then(renderLogSetupTemplateList);
+    }
+
+    $('logStartView').style.display = 'none';
+    $('logActiveView').style.display = 'none';
+    $('logSetupView').style.display = 'block';
+  }
+
+  $('startWorkoutBtn').addEventListener('click', function () {
+    openLogSetup({
+      heading: 'Log Workout',
+      date: todayISO(),
+      name: '',
+      showTemplatePicker: true,
+      buttonLabel: 'Start Workout',
+      onConfirm: function (date, name, templateId) { startNewSessionFromSetup(date, name, templateId); }
+    });
+  });
+
+  $('logSetupCancelBtn').addEventListener('click', function () { logSetupCancelHandler(); });
+
+  $('logSetupConfirmBtn').addEventListener('click', function () {
+    var date = $('logSetupDateInput').value;
+    var name = $('logSetupNameInput').value.trim();
+    if (!date) { showToast('Pick a date', true); return; }
+    if (logSetupCallback) logSetupCallback(date, name, logSetupSelectedTemplateId);
+  });
+
+  function startNewSessionFromSetup(date, name, templateId) {
+    session = { id: null, date: date, name: name, items: [], sets: [], pendingEntries: {} };
     sessionMode = 'new';
     selectMode = false;
     selectedLocalIds = [];
     entrySelection = {};
     entrySign = {};
-    $('logHeading').textContent = 'Log Workout';
-    $('saveWorkoutBtn').textContent = 'Save Workout';
+
+    function proceed() {
+      if (templateId) {
+        var tmpl = workoutTemplatesCache.find(function (t) { return t.id === templateId; });
+        if (tmpl) populateSessionFromTemplate(tmpl);
+      }
+      showLogActiveView();
+    }
+
+    if (!exercisesCache.length) {
+      apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {}).then(proceed);
+    } else {
+      proceed();
+    }
+  }
+
+  // Seeds the session from a saved template: same exercises, prescribed reps per set,
+  // weight left blank to fill in as each set is actually performed. This never writes
+  // back to the template — it only shapes this one local session.
+  function populateSessionFromTemplate(tmpl) {
+    tmpl.exercises.forEach(function (texc) {
+      var localId = uid();
+      var blockId = uid();
+      var known = exercisesCache.find(function (e) { return e.id === texc.exerciseId; });
+      session.items.push({
+        localId: localId,
+        exerciseId: texc.exerciseId,
+        name: texc.name || (known && known.name) || 'Unknown exercise',
+        category: known ? known.category : '',
+        equipment: known ? (known.equipment || '') : '',
+        blockId: blockId
+      });
+      (texc.setsReps || []).forEach(function (reps) {
+        session.sets.push({ localId: uid(), itemLocalId: localId, weight: null, reps: reps });
+      });
+    });
+  }
+
+  function showLogActiveView() {
+    $('logHeading').textContent = sessionMode === 'edit' ? 'Edit Workout' : 'Log Workout';
+    $('saveWorkoutBtn').textContent = sessionMode === 'edit' ? 'Save Changes' : 'Save Workout';
+    $('logSetupView').style.display = 'none';
     $('logStartView').style.display = 'none';
     $('logActiveView').style.display = 'block';
-    $('sessionDateInput').value = session.date;
-    $('sessionNameInput').value = '';
+    $('logActiveSummaryBtn').textContent = session.date + (session.name ? ' · ' + session.name : '');
     $('sessionExerciseSearch').value = '';
     $('sessionSearchResults').innerHTML = '';
     hideQuickAdd();
     renderSession();
-    if (!exercisesCache.length) {
-      apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
-    }
   }
 
-  $('startWorkoutBtn').addEventListener('click', startNewSession);
-
-  $('sessionDateInput').addEventListener('change', function () {
-    if (session) session.date = this.value;
-  });
-
-  $('sessionNameInput').addEventListener('input', function () {
-    if (session) session.name = this.value;
+  $('logActiveSummaryBtn').addEventListener('click', function () {
+    openLogSetup({
+      heading: sessionMode === 'edit' ? 'Edit Workout' : 'Log Workout',
+      date: session.date,
+      name: session.name,
+      showTemplatePicker: false,
+      buttonLabel: 'Continue',
+      onConfirm: function (date, name) {
+        session.date = date;
+        session.name = name;
+        showLogActiveView();
+      },
+      onCancel: function () {
+        $('logSetupView').style.display = 'none';
+        $('logActiveView').style.display = 'block';
+      }
+    });
   });
 
   $('discardWorkoutBtn').addEventListener('click', function () {
@@ -1701,18 +1927,24 @@
     el.querySelectorAll('select.cell-exercise-select').forEach(function (sel) {
       sel.addEventListener('change', function () {
         entrySelection[sel.dataset.block] = sel.value;
+        delete session.pendingEntries[sel.dataset.block]; // switched exercise -> re-derive prefill for the new one
         renderSession(); // selected exercise may differ in Bodyweight-ness -> re-check sign toggle visibility
       });
     });
-    // Entry row (the pending "next set"): Enter submits it, and typing over a
-    // prefilled (grey) suggestion marks it as the user's own value.
+    // Entry row (the pending "next set"): Enter submits it. Typing updates session.pendingEntries
+    // directly so the value survives any re-render triggered elsewhere, and marks it as the
+    // user's own (no longer grey/"prefilled") the moment they type.
     el.querySelectorAll('input.entry-num').forEach(function (input) {
       input.addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter') { ev.preventDefault(); addSet(input.dataset.block); }
       });
-      if (input.classList.contains('prefilled')) {
-        input.addEventListener('input', function () { input.classList.remove('prefilled'); }, { once: true });
-      }
+      input.addEventListener('input', function () {
+        var blockId = input.dataset.block;
+        var pend = session.pendingEntries[blockId] || (session.pendingEntries[blockId] = { weight: '', reps: '', touched: false });
+        pend.touched = true;
+        input.classList.remove('prefilled');
+        if (input.id.indexOf('w-') === 0) pend.weight = input.value; else pend.reps = input.value;
+      });
     });
     // Already-logged sets stay editable — tapping in and changing the value updates that set in place.
     el.querySelectorAll('input[data-action="editweight"]').forEach(function (input) {
@@ -1731,6 +1963,11 @@
         if (!isNaN(v)) { s.reps = v; renderSession(); }
       });
     });
+    // Tapping into any weight/reps field (prefilled entry or an already-logged set) selects
+    // its current text, so typing immediately overrides it instead of appending to it.
+    el.querySelectorAll('input.cell-num').forEach(function (input) {
+      input.addEventListener('focus', function () { input.select(); });
+    });
   }
 
   function renderBlockTable(block) {
@@ -1748,11 +1985,13 @@
     });
 
     // Already-logged sets stay tappable/editable — not locked once you move to the next set.
+    // A set seeded from a saved workout starts with no weight (needs-weight highlight) until filled in.
     var rowsHtml = rows.map(function (s) {
       var item = block.items.find(function (i) { return i.localId === s.itemLocalId; }) || {};
+      var needsWeight = s.weight == null;
       return '<div class="set-table-row">' +
         '<span class="cell-exercise">' + escapeHtml(item.name || '') + '</span>' +
-        '<input type="number" inputmode="decimal" class="cell-num" data-action="editweight" data-setid="' + s.localId + '" value="' + escapeHtml(s.weight) + '">' +
+        '<input type="number" inputmode="decimal" class="cell-num' + (needsWeight ? ' needs-weight' : '') + '" placeholder="lbs" data-action="editweight" data-setid="' + s.localId + '"' + (needsWeight ? '' : ' value="' + escapeHtml(s.weight) + '"') + '>' +
         '<input type="number" inputmode="numeric" class="cell-num" data-action="editreps" data-setid="' + s.localId + '" value="' + escapeHtml(s.reps) + '">' +
         '<button class="del" data-action="delset" data-setid="' + s.localId + '">✕</button>' +
       '</div>';
@@ -1775,21 +2014,26 @@
 
     // Carry forward the last logged set for whichever exercise is selected in the
     // entry row, so the next set starts prefilled (shown grey) with the same numbers.
-    var lastForItem = rows.filter(function (s) { return s.itemLocalId === defaultItem; }).slice(-1)[0];
+    var lastForItem = rows.filter(function (s) { return s.itemLocalId === defaultItem && s.weight != null; }).slice(-1)[0];
 
     if (isBodyweightEntry && entrySign[block.blockId] == null) {
       entrySign[block.blockId] = (lastForItem && lastForItem.weight < 0) ? -1 : 1;
     }
     var signIsNeg = isBodyweightEntry && entrySign[block.blockId] === -1;
 
-    var prefillWeight = lastForItem ? (isBodyweightEntry ? Math.abs(lastForItem.weight) : lastForItem.weight) : '';
-    var prefillReps = lastForItem ? lastForItem.reps : '';
-    var prefilledClass = lastForItem ? ' prefilled' : '';
+    // The entry row's current weight/reps live in session.pendingEntries so they survive a
+    // renderSession() triggered by something unrelated (adding another exercise, editing a
+    // different set, etc.) instead of being wiped and re-derived from scratch every render.
+    if (!session.pendingEntries[block.blockId]) {
+      var initW = lastForItem ? (isBodyweightEntry ? Math.abs(lastForItem.weight) : lastForItem.weight) : '';
+      var initR = lastForItem ? lastForItem.reps : '';
+      session.pendingEntries[block.blockId] = { weight: initW === '' ? '' : String(initW), reps: initR === '' ? '' : String(initR), touched: false };
+    }
+    var pending = session.pendingEntries[block.blockId];
+    var prefilledClass = (!pending.touched && (pending.weight !== '' || pending.reps !== '')) ? ' prefilled' : '';
 
-    var weightInput = '<input type="number" inputmode="decimal" class="cell-num entry-num' + prefilledClass + '" placeholder="lbs" id="w-' + block.blockId + '" data-block="' + block.blockId + '"' +
-      (prefillWeight !== '' ? ' value="' + escapeHtml(prefillWeight) + '"' : '') + '>';
-    var repsInput = '<input type="number" inputmode="numeric" class="cell-num entry-num' + prefilledClass + '" placeholder="reps" id="r-' + block.blockId + '" data-block="' + block.blockId + '"' +
-      (prefillReps !== '' ? ' value="' + escapeHtml(prefillReps) + '"' : '') + '>';
+    var weightInput = '<input type="number" inputmode="decimal" class="cell-num entry-num' + prefilledClass + '" placeholder="lbs" id="w-' + block.blockId + '" data-block="' + block.blockId + '" value="' + escapeHtml(pending.weight) + '">';
+    var repsInput = '<input type="number" inputmode="numeric" class="cell-num entry-num' + prefilledClass + '" placeholder="reps" id="r-' + block.blockId + '" data-block="' + block.blockId + '" value="' + escapeHtml(pending.reps) + '">';
 
     var weightCell = isBodyweightEntry
       ? '<span class="weight-with-sign">' +
@@ -1830,6 +2074,7 @@
       weight = Math.abs(magnitude) * (entrySign[blockId] === -1 ? -1 : 1);
     }
     session.sets.push({ localId: uid(), itemLocalId: itemLocalId, weight: weight, reps: reps });
+    delete session.pendingEntries[blockId]; // next render re-derives a fresh prefill from this new set
   }
 
   function addSet(blockId) {
@@ -1862,8 +2107,25 @@
     renderSession();
   }
 
-  function loadWorkoutIntoSession(workout) {
-    session = { id: workout.id, date: workout.date, name: workout.name === 'Workout' ? '' : (workout.name || ''), items: [], sets: [] };
+  function beginEditWorkout(workout) {
+    showScreen('log');
+    openLogSetup({
+      heading: 'Edit Workout',
+      date: workout.date,
+      name: workout.name === 'Workout' ? '' : (workout.name || ''),
+      showTemplatePicker: false,
+      buttonLabel: 'Continue',
+      onConfirm: function (date, name) { loadWorkoutIntoSessionAfterSetup(workout, date, name); },
+      onCancel: function () {
+        $('logSetupView').style.display = 'none';
+        $('logStartView').style.display = 'block';
+        showScreen('history');
+      }
+    });
+  }
+
+  function loadWorkoutIntoSessionAfterSetup(workout, date, name) {
+    session = { id: workout.id, date: date, name: name, items: [], sets: [], pendingEntries: {} };
     sessionMode = 'edit';
     selectMode = false;
     selectedLocalIds = [];
@@ -1881,20 +2143,10 @@
       session.sets.push({ localId: uid(), itemLocalId: itemKeyMap[key], weight: s.weight, reps: s.reps });
     });
 
-    $('logHeading').textContent = 'Edit Workout';
-    $('saveWorkoutBtn').textContent = 'Save Changes';
-    $('logStartView').style.display = 'none';
-    $('logActiveView').style.display = 'block';
-    $('sessionDateInput').value = session.date;
-    $('sessionNameInput').value = session.name;
-    $('sessionExerciseSearch').value = '';
-    $('sessionSearchResults').innerHTML = '';
-    hideQuickAdd();
-    renderSession();
     if (!exercisesCache.length) {
       apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
     }
-    showScreen('log');
+    showLogActiveView();
   }
 
   $('saveWorkoutBtn').addEventListener('click', function () {
@@ -1904,7 +2156,10 @@
     commitPendingEntryRows();
     renderSession();
 
-    if (!session.sets.length) { showToast('Log at least one set', true); return; }
+    // Sets seeded from a saved workout but never given a weight aren't logged yet — leave
+    // them out of what actually saves (they just stay on screen, still waiting to be filled in).
+    var loggedSets = session.sets.filter(function (s) { return s.weight != null; });
+    if (!loggedSets.length) { showToast('Log at least one set (enter a weight)', true); return; }
 
     // Build payload per item (not per block) since a superset block can hold
     // sets for multiple different exerciseIds sharing the same blockId.
@@ -1912,7 +2167,7 @@
       return {
         exerciseId: item.exerciseId,
         blockId: item.blockId,
-        sets: session.sets.filter(function (s) { return s.itemLocalId === item.localId; })
+        sets: loggedSets.filter(function (s) { return s.itemLocalId === item.localId; })
           .map(function (s) { return { weight: s.weight, reps: s.reps }; })
       };
     }).filter(function (i) { return i.sets.length > 0; });
@@ -1989,7 +2244,7 @@
       var backdrop = showModal(w.date + ' — ' + (w.name || 'Workout'), body);
       backdrop.querySelector('#detailEditBtn').addEventListener('click', function () {
         closeModal(backdrop);
-        loadWorkoutIntoSession(w);
+        beginEditWorkout(w);
       });
       backdrop.querySelector('#detailDeleteBtn').addEventListener('click', function () {
         closeModal(backdrop);
