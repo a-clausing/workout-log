@@ -1216,7 +1216,12 @@
     el.querySelectorAll('.exercise-row').forEach(function (row) {
       row.addEventListener('click', function () {
         var w = workoutTemplatesCache.find(function (x) { return x.id === row.dataset.id; });
-        if (w) openWorkoutTemplateDetail(w);
+        if (!w) return;
+        try {
+          openWorkoutTemplateDetail(w);
+        } catch (err) {
+          showToast('Could not open this workout: ' + err.message, true);
+        }
       });
     });
   }
@@ -1225,6 +1230,58 @@
   // Small self-contained "which exercises + sets/reps" builder, shared by create and edit.
   // Same look/feel as logging a workout: each exercise lists its sets one after another,
   // reps only (no weight — this is a template, not a performed session).
+  // Workout tags: same chip-multiselect-with-"add new" interaction as the exercise
+  // muscle picker, minus the drag-to-reorder/primary concept (doesn't apply to plain tags).
+  var BASE_WORKOUT_TAGS = ['Push', 'Pull', 'Legs', 'Upper Body', 'Lower Body', 'Full Body'];
+  function distinctWorkoutTagOptions() {
+    var used = [];
+    workoutTemplatesCache.forEach(function (t) { (t.tags || []).forEach(function (tag) { used.push(tag); }); });
+    return Array.from(new Set(BASE_WORKOUT_TAGS.concat(used)));
+  }
+  function createWorkoutTagPicker(containerId, initialTags) {
+    var selected = (initialTags || []).slice();
+    var extraOptions = [];
+
+    function allOptions() {
+      return Array.from(new Set(distinctWorkoutTagOptions().concat(extraOptions).concat(selected)));
+    }
+
+    function render() {
+      var container = $(containerId);
+      if (!container) return;
+      var chipsHtml = allOptions().map(function (tag) {
+        var checked = selected.indexOf(tag) !== -1;
+        return '<span class="tag-pill ' + (checked ? 'checked' : '') + '" data-tag="' + escapeHtml(tag) + '">' + escapeHtml(tag) + '</span>';
+      }).join('');
+      container.innerHTML =
+        '<div class="tag-pill-grid">' + chipsHtml + '</div>' +
+        '<div class="row" style="margin-top:8px;">' +
+          '<input type="text" id="' + containerId + '-new" placeholder="Add new tag">' +
+          '<button type="button" class="btn-sm" id="' + containerId + '-add-btn" style="flex:0 0 auto;">Add</button>' +
+        '</div>';
+
+      container.querySelectorAll('.tag-pill').forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          var tag = chip.dataset.tag;
+          var idx = selected.indexOf(tag);
+          if (idx === -1) selected.push(tag); else selected.splice(idx, 1);
+          render();
+        });
+      });
+      $(containerId + '-add-btn').addEventListener('click', function () {
+        var input = $(containerId + '-new');
+        var val = input.value.trim();
+        if (!val) return;
+        if (extraOptions.indexOf(val) === -1 && distinctWorkoutTagOptions().indexOf(val) === -1) extraOptions.push(val);
+        if (selected.indexOf(val) === -1) selected.push(val);
+        render();
+      });
+    }
+
+    render();
+    return { getSelected: function () { return selected.slice(); } };
+  }
+
   function createWorkoutBuilder(idPrefix, initialItems) {
     var items = (initialItems || []).map(function (it) {
       return { exerciseId: it.exerciseId, name: it.name, setsReps: (it.setsReps || []).slice() };
@@ -1347,6 +1404,7 @@
       '<input type="text" id="wtName" placeholder="e.g. Push A" value="' + (existing ? escapeHtml(existing.name) : '') + '"></div>' +
       '<div class="field"><label for="wtDuration">Estimated Duration (minutes, optional)</label>' +
       '<input type="number" id="wtDuration" placeholder="e.g. 55" value="' + (existing && existing.durationMinutes ? existing.durationMinutes : '') + '"></div>' +
+      '<div class="field"><label>Tags</label><div id="wt-tags-picker"></div></div>' +
       '<div class="field">' +
         '<label for="wtExerciseSearch">Add exercises</label>' +
         '<input type="text" id="wtExerciseSearch" placeholder="Search exercises...">' +
@@ -1359,6 +1417,7 @@
       '</div>';
 
     workoutBuilderInstance = createWorkoutBuilder('wt', existing ? existing.exercises : []);
+    var workoutTagPickerInstance = createWorkoutTagPicker('wt-tags-picker', existing ? existing.tags : []);
 
     if (!exercisesCache.length) {
       apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
@@ -1394,7 +1453,8 @@
       var payload = {
         name: name,
         exercises: items.map(function (it) { return { exerciseId: it.exerciseId, setsReps: it.setsReps }; }),
-        durationMinutes: duration
+        durationMinutes: duration,
+        tags: workoutTagPickerInstance.getSelected()
       };
       var action = existing ? 'updateWorkoutTemplate' : 'addWorkoutTemplate';
       if (existing) payload.id = existing.id;
@@ -1408,11 +1468,18 @@
   }
 
   function openWorkoutTemplateDetail(w) {
-    var dur = w.durationMinutes || estimateWorkoutDuration_(w.totalSets);
-    var body = '<p class="muted">' + w.exerciseCount + ' exercise' + (w.exerciseCount === 1 ? '' : 's') + ' · ~' + dur + ' min</p>' +
-      w.exercises.map(function (it) {
-        var setsHtml = it.setsReps.length
-          ? it.setsReps.map(function (reps, idx) {
+    var dur = w.durationMinutes || estimateWorkoutDuration_(w.totalSets || 0);
+    var tagsHtml = (w.tags || []).length
+      ? '<div class="tag-pill-grid" style="margin-bottom:10px;">' + w.tags.map(function (t) {
+          return '<span class="tag-pill checked">' + escapeHtml(t) + '</span>';
+        }).join('') + '</div>'
+      : '';
+    var body = '<p class="muted">' + (w.exerciseCount || 0) + ' exercise' + (w.exerciseCount === 1 ? '' : 's') + ' · ~' + dur + ' min</p>' +
+      tagsHtml +
+      (w.exercises || []).map(function (it) {
+        var setsReps = it.setsReps || [];
+        var setsHtml = setsReps.length
+          ? setsReps.map(function (reps, idx) {
               return '<div class="set-table-row"><span>Set ' + (idx + 1) + '</span><span>' + escapeHtml(reps) + ' reps</span><span></span><span></span></div>';
             }).join('')
           : '<p class="muted" style="margin:4px 0;">No sets prescribed.</p>';
