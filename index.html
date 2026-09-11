@@ -505,12 +505,12 @@
   var NEW_CATEGORY_VALUE = '__new__';
 
   // ---------- State ----------
-  // Truthy once Supabase (Project URL + anon key) is configured for this device.
-  if (!window.WorkoutAPI) {
-    document.body.innerHTML = '<div style="padding:24px;font:15px system-ui;">Could not load <code>supabase-api.js</code>. Make sure it sits next to <code>index.html</code> and you have an internet connection (the Supabase library loads from a CDN).</div>';
-    throw new Error('WorkoutAPI missing');
+  if (!window.WorkoutAPI || window.WorkoutAPI.loadError) {
+    var loadErrMsg = (window.WorkoutAPI && window.WorkoutAPI.loadError) ||
+      'Could not load supabase-api.js. Make sure it sits next to index.html.';
+    document.body.innerHTML = '<div style="padding:24px;font:15px system-ui;">' + loadErrMsg + '</div>';
+    throw new Error(loadErrMsg);
   }
-  var API_URL = window.WorkoutAPI.isConfigured() ? 'supabase' : '';
   var exercisesCache = [];
 
   // Active in-progress (or being-edited) workout session.
@@ -694,8 +694,14 @@
   }
 
   function openEditAccountModal(forceFirstRun) {
+    var session = window.WorkoutAPI.getCachedSession();
+
+    if (!session) {
+      openSignInModal(forceFirstRun);
+      return;
+    }
+
     var pendingPhoto = profilePhoto;
-    var supabaseCfg = window.WorkoutAPI.getConfig();
     var body =
       '<div style="text-align:center; margin-bottom:16px;">' +
         '<div class="avatar avatar-xl" id="acctAvatarPreview" style="margin:0 auto 10px;"></div>' +
@@ -704,19 +710,11 @@
       '</div>' +
       '<div class="field"><label for="acctNameInput">Name</label>' +
         '<input type="text" id="acctNameInput" placeholder="Your name" value="' + escapeHtml(profileName) + '"></div>' +
-      '<div class="field"><label for="acctUrlInput">Supabase Project URL</label>' +
-        '<input type="text" id="acctUrlInput" placeholder="https://xxxxxxxx.supabase.co" value="' + escapeHtml(supabaseCfg.url) + '"></div>' +
-      '<div class="field"><label for="acctKeyInput">Supabase publishable (anon) key</label>' +
-        '<input type="text" id="acctKeyInput" placeholder="sb_publishable_... or eyJhbGciOi..." value="' + escapeHtml(supabaseCfg.key) + '">' +
-        '<p class="muted" style="margin:6px 0 0;">Supabase project → Settings → API Keys → the publishable key (or the legacy anon key). NOT a secret key. Stored on this device only.</p>' +
-      '</div>' +
-      '<button class="btn block" id="acctSaveBtn" style="margin-top:8px;">Save</button>';
+      '<p class="muted" style="margin:0 0 16px;">Signed in as ' + escapeHtml(session.user.email) + '</p>' +
+      '<button class="btn block" id="acctSaveBtn" style="margin-bottom:8px;">Save</button>' +
+      '<button class="btn-sm block" id="acctSignOutBtn">Sign Out</button>';
 
     var backdrop = showModal('Edit Account', body, true);
-    if (forceFirstRun) {
-      backdrop.querySelector('#closeModalBtn').style.display = 'none';
-      backdrop.dataset.locked = '1';
-    }
 
     function paintPreview() {
       var el = $('acctAvatarPreview');
@@ -735,21 +733,48 @@
     });
 
     $('acctSaveBtn').addEventListener('click', function () {
-      var url = $('acctUrlInput').value.trim();
-      var key = $('acctKeyInput').value.trim();
-      if (!url || !key) { showToast('Paste your Supabase URL and anon key to continue', true); return; }
       profileName = $('acctNameInput').value.trim();
       profilePhoto = pendingPhoto;
-      window.WorkoutAPI.configure(url, key);
-      API_URL = 'supabase';
       localStorage.setItem('workoutlog.profileName', profileName);
       localStorage.setItem('workoutlog.profilePhoto', profilePhoto);
       renderAvatars();
-      delete backdrop.dataset.locked;
       closeModal(backdrop);
       showToast('Account saved');
-      showScreen('library');
     });
+
+    $('acctSignOutBtn').addEventListener('click', function () {
+      window.WorkoutAPI.signOut().then(function () { location.reload(); });
+    });
+  }
+
+  function openSignInModal(forceFirstRun) {
+    var body =
+      '<div class="field"><label for="acctEmailInput">Email</label>' +
+        '<input type="email" id="acctEmailInput" placeholder="you@example.com" autocomplete="username"></div>' +
+      '<div class="field"><label for="acctPasswordInput">Password</label>' +
+        '<input type="password" id="acctPasswordInput" placeholder="••••••••" autocomplete="current-password"></div>' +
+      '<button class="btn block" id="acctSignInBtn" style="margin-top:8px;">Sign In</button>' +
+      '<p class="muted" style="margin-top:10px;">No self sign-up — ask whoever set this app up for an account.</p>';
+
+    var backdrop = showModal('Sign In', body, true);
+    if (forceFirstRun) {
+      backdrop.querySelector('#closeModalBtn').style.display = 'none';
+      backdrop.dataset.locked = '1';
+    }
+
+    function attempt() {
+      var email = $('acctEmailInput').value.trim();
+      var password = $('acctPasswordInput').value;
+      if (!email || !password) { showToast('Enter your email and password', true); return; }
+      window.WorkoutAPI.signIn(email, password).then(function () {
+        delete backdrop.dataset.locked;
+        closeModal(backdrop);
+        showToast('Signed in');
+        showScreen('library');
+      }).catch(function (err) { showToast(err.message, true); });
+    }
+    $('acctSignInBtn').addEventListener('click', attempt);
+    $('acctPasswordInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') attempt(); });
   }
 
   // ---------- Generic single-select-with-"add new" widget ----------
@@ -2384,9 +2409,14 @@
   }
 
   function init() {
-    showScreen('library');
-    if (!API_URL) openEditAccountModal(true);
-    showSplash();
+    window.WorkoutAPI.getSession().then(function (session) {
+      if (session) {
+        showScreen('library');
+      } else {
+        openSignInModal(true);
+      }
+      showSplash();
+    });
   }
 
   init();

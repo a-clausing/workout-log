@@ -1,47 +1,35 @@
 /**
- * Workout Log — Supabase data layer.
+ * Workout Log — Supabase data layer (per-user auth version).
  *
- * Drop-in replacement for the old Apps Script `apiGet` / `apiPost`. Every
- * function returns exactly the same shape the Apps Script backend (Code.gs)
- * used to return, so nothing in index.html's app logic has to change — only
- * the two one-line delegating wrappers and the Settings form.
- *
- * Requires the supabase-js UMD bundle to be loaded first (it defines the
- * global `supabase`).
- *
- * Config (Project URL + anon key) is stored per-device in localStorage, the
- * same way the Apps Script URL used to be.
+ * The Project URL and publishable key below are meant to be public — that's
+ * how every Supabase app ships. They are NOT what protects your data; the
+ * database's Row Level Security policies (see supabase/schema.sql) are what
+ * actually restrict each signed-in user to their own rows. Don't put a
+ * `service_role` / secret key here — that one DOES need to stay private.
  */
+var SUPABASE_URL = 'https://hrnkuamsybsrbxiuwpib.supabase.co';
+var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
+
 (function () {
   'use strict';
 
-  var URL_KEY = 'workoutlog.supabaseUrl';
-  var ANON_KEY = 'workoutlog.supabaseKey';
   var SCHEDULE_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  var _client = null;
-
-  function isConfigured() {
-    return !!(localStorage.getItem(URL_KEY) && localStorage.getItem(ANON_KEY));
+  if (!window.supabase || !window.supabase.createClient) {
+    window.WorkoutAPI = { loadError: 'supabase-js failed to load (check your internet connection).' };
+    return;
   }
 
-  function configure(url, key) {
-    localStorage.setItem(URL_KEY, (url || '').trim().replace(/\/+$/, ''));
-    localStorage.setItem(ANON_KEY, (key || '').trim());
-    _client = null; // force rebuild on next call
-  }
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var _session = undefined; // undefined = not checked yet, null = signed out, object = signed in
 
-  function client() {
-    if (_client) return _client;
-    var url = localStorage.getItem(URL_KEY);
-    var key = localStorage.getItem(ANON_KEY);
-    if (!url || !key) throw new Error('Supabase isn’t set up yet. Open your account settings.');
-    if (!window.supabase || !window.supabase.createClient) {
-      throw new Error('supabase-js failed to load (check your internet connection).');
-    }
-    _client = window.supabase.createClient(url, key);
-    return _client;
-  }
+  sb.auth.onAuthStateChange(function (_event, session) { _session = session; });
+  var initialSessionPromise = sb.auth.getSession().then(function (res) {
+    _session = res.data.session;
+    return _session;
+  });
+
+  function client() { return sb; }
 
   // Unwrap a supabase-js { data, error } result or throw.
   function take(res) {
@@ -374,14 +362,31 @@
     }
   };
 
+  // ---------- auth ----------
+
+  function signIn(email, password) {
+    return sb.auth.signInWithPassword({ email: email, password: password }).then(function (res) {
+      if (res.error) throw new Error(res.error.message || 'Sign in failed');
+      _session = res.data.session;
+      return _session;
+    });
+  }
+  function signOut() {
+    return sb.auth.signOut().then(function () { _session = null; });
+  }
+  function getSession() {
+    // resolves once the initial check has run, then reflects live state
+    return initialSessionPromise.then(function () { return _session; });
+  }
+  function getCachedSession() { return _session || null; }
+
   // ---------- public surface ----------
 
   window.WorkoutAPI = {
-    isConfigured: isConfigured,
-    configure: configure,
-    getConfig: function () {
-      return { url: localStorage.getItem(URL_KEY) || '', key: localStorage.getItem(ANON_KEY) || '' };
-    },
+    signIn: signIn,
+    signOut: signOut,
+    getSession: getSession,
+    getCachedSession: getCachedSession,
     apiGet: function (action, params) {
       return Promise.resolve().then(function () {
         if (!GET[action]) throw new Error('Unknown action: ' + action);
