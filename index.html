@@ -337,6 +337,9 @@
 </style>
 </head>
 <body>
+<!-- Supabase data layer (replaces the old Google Apps Script backend) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="supabase-api.js"></script>
 
 <div id="splashScreen" class="splash-screen"><img id="splashLogo" class="splash-logo" alt="Next Rep"></div>
 
@@ -502,7 +505,12 @@
   var NEW_CATEGORY_VALUE = '__new__';
 
   // ---------- State ----------
-  var API_URL = localStorage.getItem('workoutlog.apiUrl') || '';
+  // Truthy once Supabase (Project URL + anon key) is configured for this device.
+  if (!window.WorkoutAPI) {
+    document.body.innerHTML = '<div style="padding:24px;font:15px system-ui;">Could not load <code>supabase-api.js</code>. Make sure it sits next to <code>index.html</code> and you have an internet connection (the Supabase library loads from a CDN).</div>';
+    throw new Error('WorkoutAPI missing');
+  }
+  var API_URL = window.WorkoutAPI.isConfigured() ? 'supabase' : '';
   var exercisesCache = [];
 
   // Active in-progress (or being-edited) workout session.
@@ -602,26 +610,14 @@
   }
 
   // ---------- API ----------
+  // Backed by Supabase now (see supabase-api.js). These wrappers keep the same
+  // signatures and return shapes the old Apps Script backend used, so the rest
+  // of this file is unchanged.
   function apiGet(action, params) {
-    if (!API_URL) return Promise.reject(new Error('No API URL configured. Open Settings.'));
-    var url = API_URL + '?action=' + encodeURIComponent(action);
-    for (var k in (params || {})) {
-      url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
-    }
-    return fetch(url).then(function (r) { return r.json(); }).then(unwrap);
+    return window.WorkoutAPI.apiGet(action, params);
   }
   function apiPost(action, payload) {
-    if (!API_URL) return Promise.reject(new Error('No API URL configured. Open Settings.'));
-    var body = Object.assign({ action: action }, payload || {});
-    return fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(body)
-    }).then(function (r) { return r.json(); }).then(unwrap);
-  }
-  function unwrap(res) {
-    if (!res || !res.ok) throw new Error((res && res.error) || 'Request failed');
-    return res.data;
+    return window.WorkoutAPI.apiPost(action, payload);
   }
 
   // ---------- Navigation ----------
@@ -699,6 +695,7 @@
 
   function openEditAccountModal(forceFirstRun) {
     var pendingPhoto = profilePhoto;
+    var supabaseCfg = window.WorkoutAPI.getConfig();
     var body =
       '<div style="text-align:center; margin-bottom:16px;">' +
         '<div class="avatar avatar-xl" id="acctAvatarPreview" style="margin:0 auto 10px;"></div>' +
@@ -707,9 +704,11 @@
       '</div>' +
       '<div class="field"><label for="acctNameInput">Name</label>' +
         '<input type="text" id="acctNameInput" placeholder="Your name" value="' + escapeHtml(profileName) + '"></div>' +
-      '<div class="field"><label for="acctUrlInput">Link Database URL</label>' +
-        '<input type="text" id="acctUrlInput" placeholder="https://script.google.com/macros/s/.../exec" value="' + escapeHtml(API_URL) + '">' +
-        '<p class="muted" style="margin:6px 0 0;">Paste your deployed Google Apps Script Web App URL (the one connected to your Google Sheet). Saved on this device only.</p>' +
+      '<div class="field"><label for="acctUrlInput">Supabase Project URL</label>' +
+        '<input type="text" id="acctUrlInput" placeholder="https://xxxxxxxx.supabase.co" value="' + escapeHtml(supabaseCfg.url) + '"></div>' +
+      '<div class="field"><label for="acctKeyInput">Supabase publishable (anon) key</label>' +
+        '<input type="text" id="acctKeyInput" placeholder="sb_publishable_... or eyJhbGciOi..." value="' + escapeHtml(supabaseCfg.key) + '">' +
+        '<p class="muted" style="margin:6px 0 0;">Supabase project → Settings → API Keys → the publishable key (or the legacy anon key). NOT a secret key. Stored on this device only.</p>' +
       '</div>' +
       '<button class="btn block" id="acctSaveBtn" style="margin-top:8px;">Save</button>';
 
@@ -737,13 +736,14 @@
 
     $('acctSaveBtn').addEventListener('click', function () {
       var url = $('acctUrlInput').value.trim();
-      if (!url) { showToast('Paste your Database URL to continue', true); return; }
+      var key = $('acctKeyInput').value.trim();
+      if (!url || !key) { showToast('Paste your Supabase URL and anon key to continue', true); return; }
       profileName = $('acctNameInput').value.trim();
       profilePhoto = pendingPhoto;
-      API_URL = url;
+      window.WorkoutAPI.configure(url, key);
+      API_URL = 'supabase';
       localStorage.setItem('workoutlog.profileName', profileName);
       localStorage.setItem('workoutlog.profilePhoto', profilePhoto);
-      localStorage.setItem('workoutlog.apiUrl', url);
       renderAvatars();
       delete backdrop.dataset.locked;
       closeModal(backdrop);
