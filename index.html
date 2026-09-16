@@ -230,6 +230,45 @@
   }
   .superset-block .add-set-row-btn { color: var(--superset-ink); border-color: var(--superset-ink); }
 
+  /* Advanced set logging: mode select, badges, drop/side sub-rows, advanced panel */
+  .mode-select {
+    font-size: 11px; padding: 3px 6px; border-radius: 8px; margin-left: 2px;
+    background: var(--card-soft); color: var(--text-dim); border: 1px solid var(--card-border);
+  }
+  .set-badges { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+  .set-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 8px;
+    background: var(--card-soft); color: var(--text-dim); white-space: nowrap;
+  }
+  .set-badge.failure { background: var(--danger); color: var(--danger-ink); }
+  .set-badge.tempo { background: var(--card-soft); color: var(--text); border: 1px solid var(--card-border); }
+  .set-table-row.sub .cell-exercise { padding-left: 16px; color: var(--text-dim); font-size: 13px; }
+  .edit-toggle {
+    background: none; border: none; color: var(--text-dim); font-size: 14px; cursor: pointer; padding: 4px;
+  }
+  .advanced-toggle {
+    background: none; border: none; color: var(--accent); font-size: 12px; font-weight: 700;
+    cursor: pointer; padding: 4px 0; text-align: left;
+  }
+  .superset-block .advanced-toggle { color: var(--superset-ink); }
+  .advanced-panel {
+    background: var(--card-soft); border-radius: var(--radius-md); padding: 10px; margin: 4px 0 10px;
+  }
+  .advanced-panel .field-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  .advanced-panel .tempo-label { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+  .tempo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+  .tempo-field label { font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 2px; }
+  .tempo-field input { width: 100%; padding: 6px 4px; text-align: center; border-radius: 8px; }
+  .add-drop-btn {
+    background: none; border: 1.5px dashed var(--text-dim); color: var(--text-dim); border-radius: var(--radius-md);
+    font-size: 12px; font-weight: 700; padding: 6px; width: 100%; cursor: pointer; margin-top: 2px;
+  }
+  .superset-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .unlink-btn {
+    background: none; border: none; color: var(--superset-ink); font-size: 12px; font-weight: 700;
+    text-decoration: underline; cursor: pointer; padding: 2px;
+  }
+
   .search-results { max-height: 260px; overflow-y: auto; margin-top: 8px; }
   .search-results .exercise-row { cursor: pointer; }
   .search-results .exercise-row:active { background: var(--card-soft); }
@@ -391,6 +430,7 @@
         <div class="field" id="newExEquipmentField"></div>
         <div class="field" id="newExCategoryField"></div>
         <div class="field" id="newExMusclesField"></div>
+        <div class="field" id="newExTempoField"></div>
         <button class="btn block" id="submitNewExerciseBtn">Save Exercise</button>
       </div>
 
@@ -515,13 +555,21 @@
 
   // Active in-progress (or being-edited) workout session.
   // items: [{localId, exerciseId, name, category, blockId}]
-  // sets:  [{localId, itemLocalId, weight, reps}]  (order = insertion/chronological order)
+  // sets:  [{localId, itemLocalId, mode, weight, reps, right, toFailure, tempo, dropSegments}]
+  //   mode: 'bilateral' (default/ordinary) | 'both' (one entry, means both sides) | 'independent' (left/right logged separately)
+  //   weight/reps: the set's values for 'bilateral'/'both'; the LEFT side's values for 'independent'
+  //   right: {weight, reps} — only present when mode is 'independent'
+  //   tempo: null (inherit exercise default) or {eccentric, bottomPause, concentric, topPause}
+  //   dropSegments: [{weight, reps}, ...] performed after the primary effort
   var session = null;
   var sessionMode = 'new'; // 'new' | 'edit'
   var selectMode = false;
   var selectedLocalIds = [];
   var entrySelection = {}; // blockId -> itemLocalId, sticky exercise choice for superset entry rows
   var entrySign = {}; // blockId -> 1 | -1, sticky +/- for Bodyweight entry rows (added weight vs. assisted)
+  var itemMode = {}; // itemLocalId -> 'bilateral' | 'both' | 'independent', sticky per exercise-in-session
+  var entryAdvanced = {}; // blockId -> {open, toFailure, tempo} pending failure/tempo for the NEXT set
+  var expandedSetPanels = {}; // setLocalId -> true, whether an already-logged set's Failure/Tempo panel is open
 
   // ---------- Utilities ----------
   function $(id) { return document.getElementById(id); }
@@ -1037,6 +1085,31 @@
 
   $('librarySearch').addEventListener('input', renderLibraryList);
 
+  // Shared by the Add Exercise and Edit Exercise forms.
+  function tempoFieldsHtml(prefix, tempo) {
+    var labels = ['Ecc', 'Bottom', 'Con', 'Top'];
+    var fields = ['eccentric', 'bottomPause', 'concentric', 'topPause'];
+    return '<div class="tempo-label">Default Tempo (optional) — Eccentric-Bottom-Concentric-Top</div>' +
+      '<div class="tempo-grid">' +
+        fields.map(function (f, i) {
+          var v = tempo ? tempo[f] : null;
+          return '<div class="tempo-field"><label>' + labels[i] + '</label>' +
+            '<input type="number" inputmode="numeric" id="' + prefix + 'Tempo_' + f + '" value="' + (v == null ? '' : escapeHtml(v)) + '"></div>';
+        }).join('') +
+      '</div>';
+  }
+  function readTempoFields(prefix) {
+    var fields = ['eccentric', 'bottomPause', 'concentric', 'topPause'];
+    var t = {}, any = false;
+    fields.forEach(function (f) {
+      var el = $(prefix + 'Tempo_' + f);
+      var v = el && el.value !== '' ? Number(el.value) : null;
+      t[f] = isNaN(v) ? null : v;
+      if (t[f] != null) any = true;
+    });
+    return any ? t : null;
+  }
+
   var newExMuscleEditor = null;
 
   $('toggleAddExerciseBtn').addEventListener('click', function () {
@@ -1050,6 +1123,7 @@
       wireCategorySelect('newEx');
       $('newExMusclesField').innerHTML = '<div id="newEx-muscles-editor"></div>';
       newExMuscleEditor = createMuscleEditor('newEx', []);
+      $('newExTempoField').innerHTML = tempoFieldsHtml('newEx', null);
     }
   });
 
@@ -1058,10 +1132,11 @@
     var category = readCategorySelect('newEx');
     var equipment = readEquipmentSelect('newEx');
     var muscles = newExMuscleEditor ? newExMuscleEditor.getSelected() : [];
+    var defaultTempo = readTempoFields('newEx');
     if (!name) { showToast('Name is required', true); return; }
 
     function doSave() {
-      apiPost('addExercise', { name: name, category: category, equipment: equipment, muscles: muscles }).then(function () {
+      apiPost('addExercise', { name: name, category: category, equipment: equipment, muscles: muscles, defaultTempo: defaultTempo }).then(function () {
         $('newExName').value = '';
         $('addExerciseForm').style.display = 'none';
         showToast('Exercise added');
@@ -1087,6 +1162,7 @@
       '<div class="field" id="editExEquipmentField">' + equipmentSelectHtml('editEx', ex.equipment || '') + '</div>' +
       '<div class="field" id="editExCategoryField">' + categorySelectHtml('editEx', ex.category || '') + '</div>' +
       '<div class="field" id="editExMusclesField"><div id="editEx-muscles-editor"></div></div>' +
+      '<div class="field">' + tempoFieldsHtml('editEx', ex.defaultTempo) + '</div>' +
       '<div class="modal-actions">' +
         '<button class="btn secondary" id="editExCancelBtn">Cancel</button>' +
         '<button class="btn" id="editExSaveBtn">Save</button>' +
@@ -1125,10 +1201,11 @@
       var category = readCategorySelect('editEx');
       var equipment = readEquipmentSelect('editEx');
       var muscles = editExMuscleEditor.getSelected();
+      var defaultTempo = readTempoFields('editEx');
       if (!name) { showToast('Name is required', true); return; }
 
       function doSave() {
-        apiPost('updateExercise', { id: ex.id, name: name, category: category, equipment: equipment, muscles: muscles }).then(function () {
+        apiPost('updateExercise', { id: ex.id, name: name, category: category, equipment: equipment, muscles: muscles, defaultTempo: defaultTempo }).then(function () {
           closeModal(backdrop);
           showToast('Exercise updated');
           loadLibrary();
@@ -1765,6 +1842,9 @@
     selectedLocalIds = [];
     entrySelection = {};
     entrySign = {};
+    itemMode = {};
+    entryAdvanced = {};
+    expandedSetPanels = {};
 
     function proceed() {
       if (templateId) {
@@ -1798,7 +1878,7 @@
         blockId: blockId
       });
       (texc.setsReps || []).forEach(function (reps) {
-        session.sets.push({ localId: uid(), itemLocalId: localId, weight: null, reps: reps });
+        session.sets.push({ localId: uid(), itemLocalId: localId, mode: 'bilateral', weight: null, reps: reps, toFailure: false, tempo: null, dropSegments: [] });
       });
     });
   }
@@ -1986,6 +2066,126 @@
     return order.map(function (blockId) { return { blockId: blockId, items: map[blockId] }; });
   }
 
+  // ---------- Advanced set logging: tempo / failure / drop segments / unilateral helpers ----------
+
+  function exerciseDefaultTempo(exerciseId) {
+    var ex = exercisesCache.find(function (e) { return e.id === exerciseId; });
+    return (ex && ex.defaultTempo) || null;
+  }
+  function tempoLabel(t) {
+    if (!t) return '';
+    return [t.eccentric, t.bottomPause, t.concentric, t.topPause].map(function (n) { return (n == null || n === '') ? '0' : n; }).join('-');
+  }
+  function getEntryAdvanced(blockId) {
+    return entryAdvanced[blockId] || (entryAdvanced[blockId] = { open: false, toFailure: false, tempo: null });
+  }
+  // Resolves a data-key ("entry:<blockId>" or "set:<setLocalId>") to the object
+  // whose toFailure/tempo/dropSegments a control should read/write. Lets the
+  // same panel markup and event wiring serve both the pending entry row and
+  // an already-logged set.
+  function stateForKey(key) {
+    if (key.indexOf('entry:') === 0) return getEntryAdvanced(key.slice(6));
+    if (key.indexOf('set:') === 0) return session.sets.find(function (s) { return s.localId === key.slice(4); });
+    return null;
+  }
+  // The exercise default tempo for whatever a key points at — used so that
+  // editing just ONE tempo field seeds the other three from the default
+  // instead of zeroing them out.
+  function defaultTempoForKey(key) {
+    var itemLocalId;
+    if (key.indexOf('entry:') === 0) itemLocalId = entrySelection[key.slice(6)];
+    else if (key.indexOf('set:') === 0) {
+      var s = session.sets.find(function (x) { return x.localId === key.slice(4); });
+      itemLocalId = s && s.itemLocalId;
+    }
+    var item = session.items.find(function (i) { return i.localId === itemLocalId; });
+    return item ? exerciseDefaultTempo(item.exerciseId) : null;
+  }
+
+  function renderAdvancedPanel(key, state, defaultTempo, showAddDrop) {
+    var labels = ['Ecc', 'Bottom', 'Con', 'Top'];
+    var fields = ['eccentric', 'bottomPause', 'concentric', 'topPause'];
+    return '<div class="advanced-panel">' +
+      '<label class="field-row"><input type="checkbox" data-action="togglefailure" data-key="' + key + '"' + (state.toFailure ? ' checked' : '') + '> To Failure</label>' +
+      '<div class="tempo-label">Tempo (Ecc-Bottom-Con-Top)' + (defaultTempo ? ' — default ' + escapeHtml(tempoLabel(defaultTempo)) : '') + '</div>' +
+      '<div class="tempo-grid">' +
+        fields.map(function (field, i) {
+          var v = state.tempo ? state.tempo[field] : null;
+          var ph = defaultTempo && defaultTempo[field] != null ? String(defaultTempo[field]) : '0';
+          return '<div class="tempo-field"><label>' + labels[i] + '</label>' +
+            '<input type="number" inputmode="numeric" placeholder="' + escapeHtml(ph) + '" data-action="tempofield" data-key="' + key + '" data-field="' + field + '" value="' + (v == null ? '' : escapeHtml(v)) + '"></div>';
+        }).join('') +
+      '</div>' +
+      (showAddDrop ? '<button type="button" class="add-drop-btn" data-action="adddrop" data-key="' + key + '">+ Add Drop</button>' : '') +
+    '</div>';
+  }
+
+  function renderDropRows(key, dropSegments) {
+    return (dropSegments || []).map(function (seg, idx) {
+      return '<div class="set-table-row sub">' +
+        '<span class="cell-exercise">↳ Drop ' + (idx + 1) + '</span>' +
+        '<input type="number" inputmode="decimal" class="cell-num" placeholder="lbs" data-action="dropweight" data-key="' + key + '" data-idx="' + idx + '" value="' + (seg.weight == null ? '' : escapeHtml(seg.weight)) + '">' +
+        '<input type="number" inputmode="numeric" class="cell-num" placeholder="reps" data-action="dropreps" data-key="' + key + '" data-idx="' + idx + '" value="' + (seg.reps == null ? '' : escapeHtml(seg.reps)) + '">' +
+        '<button class="del" data-action="deldrop" data-key="' + key + '" data-idx="' + idx + '">✕</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  // One already-logged set: 1 row (bilateral/'both') or 2 rows (independent
+  // left/right), plus any drop segments (always visible once added), plus a
+  // collapsed-by-default panel for failure/tempo/adding a drop.
+  function renderLoggedSetRow(s, item) {
+    var key = 'set:' + s.localId;
+    var defaultTempo = exerciseDefaultTempo(item.exerciseId);
+    var effTempo = s.tempo || defaultTempo;
+    var badgesHtml = (s.toFailure || effTempo)
+      ? '<span class="set-badges">' +
+          (s.toFailure ? '<span class="set-badge failure">Failure</span>' : '') +
+          (effTempo ? '<span class="set-badge tempo">' + escapeHtml(tempoLabel(effTempo)) + '</span>' : '') +
+        '</span>'
+      : '';
+
+    var html;
+    if (s.mode === 'independent') {
+      var needsWeightL = s.weight == null, needsWeightR = !s.right || s.right.weight == null;
+      html =
+        '<div class="set-table-row">' +
+          '<span class="cell-exercise">' + escapeHtml(item.name || '') + badgesHtml + '</span>' +
+          '<input type="number" inputmode="decimal" class="cell-num' + (needsWeightL ? ' needs-weight' : '') + '" placeholder="lbs" data-action="editweight" data-setid="' + s.localId + '" data-side="left"' + (needsWeightL ? '' : ' value="' + escapeHtml(s.weight) + '"') + '>' +
+          '<input type="number" inputmode="numeric" class="cell-num" placeholder="reps" data-action="editreps" data-setid="' + s.localId + '" data-side="left" value="' + (s.reps == null ? '' : escapeHtml(s.reps)) + '">' +
+          '<button class="del" data-action="delset" data-setid="' + s.localId + '" data-side="left">✕</button>' +
+        '</div>' +
+        '<div class="set-table-row sub">' +
+          '<span class="cell-exercise">↳ R</span>' +
+          '<input type="number" inputmode="decimal" class="cell-num' + (needsWeightR ? ' needs-weight' : '') + '" placeholder="lbs" data-action="editweight" data-setid="' + s.localId + '" data-side="right"' + (needsWeightR ? '' : ' value="' + escapeHtml(s.right.weight) + '"') + '>' +
+          '<input type="number" inputmode="numeric" class="cell-num" placeholder="reps" data-action="editreps" data-setid="' + s.localId + '" data-side="right" value="' + (s.right && s.right.reps != null ? escapeHtml(s.right.reps) : '') + '">' +
+          '<button class="del" data-action="delset" data-setid="' + s.localId + '" data-side="right">✕</button>' +
+        '</div>';
+    } else {
+      var needsWeight = s.weight == null;
+      var label = (item.name || '') + (s.mode === 'both' ? ' (per side)' : '');
+      html =
+        '<div class="set-table-row">' +
+          '<span class="cell-exercise">' + escapeHtml(label) + badgesHtml + '</span>' +
+          '<input type="number" inputmode="decimal" class="cell-num' + (needsWeight ? ' needs-weight' : '') + '" placeholder="lbs" data-action="editweight" data-setid="' + s.localId + '"' + (needsWeight ? '' : ' value="' + escapeHtml(s.weight) + '"') + '>' +
+          '<input type="number" inputmode="numeric" class="cell-num" placeholder="reps" data-action="editreps" data-setid="' + s.localId + '" value="' + (s.reps == null ? '' : escapeHtml(s.reps)) + '">' +
+          '<button class="del" data-action="delset" data-setid="' + s.localId + '">✕</button>' +
+        '</div>' +
+        renderDropRows(key, s.dropSegments);
+    }
+
+    html += expandedSetPanels[s.localId]
+      ? renderAdvancedPanel(key, s, defaultTempo, s.mode !== 'independent')
+      : '<button type="button" class="advanced-toggle" data-action="expandset" data-setid="' + s.localId + '">⚙ Failure / Tempo' + (s.mode !== 'independent' ? ' / Drop' : '') + '</button>';
+    return html;
+  }
+
+  function unlinkBlock(blockId) {
+    session.items.forEach(function (item) { if (item.blockId === blockId) item.blockId = uid(); });
+    renderSession();
+    showToast('Superset unlinked');
+  }
+
   function renderSession() {
     var el = $('sessionExerciseList');
     $('linkBar').style.display = selectMode ? 'block' : 'none';
@@ -2000,7 +2200,11 @@
       var isSuperset = block.items.length > 1;
       var inner = renderBlockTable(block);
       if (isSuperset) {
-        return '<div class="superset-block"><div class="superset-label">🔗 Superset</div>' + inner + '</div>';
+        var label = block.items.length === 2 ? 'Superset' : (block.items.length === 3 ? 'Tri-Set' : 'Giant Set');
+        return '<div class="superset-block">' +
+          '<div class="superset-label-row"><div class="superset-label">🔗 ' + label + '</div>' +
+          '<button type="button" class="unlink-btn" data-action="unlink" data-block="' + block.blockId + '">Unlink</button></div>' +
+          inner + '</div>';
       }
       return '<div class="block-card">' + inner + '</div>';
     }).join('');
@@ -2012,15 +2216,76 @@
         if (action === 'select') toggleSelect(localId);
         else if (action === 'remove') removeExerciseFromSession(localId);
         else if (action === 'addset') addSet(node.dataset.block);
-        else if (action === 'delset') deleteSet(node.dataset.setid);
+        else if (action === 'delset') deleteSet(node.dataset.setid, node.dataset.side);
         else if (action === 'togglesign') toggleEntrySign(node.dataset.block);
+        else if (action === 'unlink') unlinkBlock(node.dataset.block);
+        else if (action === 'toggleentryadv') { getEntryAdvanced(node.dataset.block).open = true; renderSession(); }
+        else if (action === 'expandset') { expandedSetPanels[node.dataset.setid] = true; renderSession(); }
+        else if (action === 'adddrop') {
+          var st = stateForKey(node.dataset.key);
+          if (st) { if (!st.dropSegments) st.dropSegments = []; st.dropSegments.push({ weight: null, reps: null }); renderSession(); }
+        } else if (action === 'deldrop') {
+          var st2 = stateForKey(node.dataset.key);
+          if (st2 && st2.dropSegments) { st2.dropSegments.splice(Number(node.dataset.idx), 1); renderSession(); }
+        }
       });
     });
     el.querySelectorAll('select.cell-exercise-select').forEach(function (sel) {
       sel.addEventListener('change', function () {
         entrySelection[sel.dataset.block] = sel.value;
         delete session.pendingEntries[sel.dataset.block]; // switched exercise -> re-derive prefill for the new one
-        renderSession(); // selected exercise may differ in Bodyweight-ness -> re-check sign toggle visibility
+        renderSession(); // selected exercise may differ in Bodyweight-ness/mode -> re-check
+      });
+    });
+    el.querySelectorAll('select.mode-select').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        itemMode[sel.dataset.item] = sel.value;
+        renderSession();
+      });
+    });
+    el.querySelectorAll('input[data-action="togglefailure"]').forEach(function (input) {
+      input.addEventListener('change', function () {
+        var st = stateForKey(input.dataset.key);
+        if (st) { st.toFailure = input.checked; renderSession(); }
+      });
+    });
+    // Tempo fields mutate state directly on 'input' (no re-render) so typing doesn't lose focus;
+    // an all-blank tempo collapses back to null (inherit the exercise default, if any).
+    el.querySelectorAll('input[data-action="tempofield"]').forEach(function (input) {
+      input.addEventListener('input', function () {
+        var st = stateForKey(input.dataset.key);
+        if (!st) return;
+        if (!st.tempo) {
+          var dt = defaultTempoForKey(input.dataset.key) || {};
+          st.tempo = {
+            eccentric: dt.eccentric != null ? dt.eccentric : null,
+            bottomPause: dt.bottomPause != null ? dt.bottomPause : null,
+            concentric: dt.concentric != null ? dt.concentric : null,
+            topPause: dt.topPause != null ? dt.topPause : null
+          };
+        }
+        var v = input.value === '' ? null : Number(input.value);
+        st.tempo[input.dataset.field] = isNaN(v) ? null : v;
+        var t = st.tempo;
+        if (t.eccentric == null && t.bottomPause == null && t.concentric == null && t.topPause == null) st.tempo = null;
+      });
+    });
+    el.querySelectorAll('input[data-action="dropweight"]').forEach(function (input) {
+      input.addEventListener('input', function () {
+        var st = stateForKey(input.dataset.key);
+        var seg = st && st.dropSegments && st.dropSegments[input.dataset.idx];
+        if (!seg) return;
+        var v = input.value === '' ? null : parseFloat(input.value);
+        seg.weight = (v != null && isNaN(v)) ? null : v;
+      });
+    });
+    el.querySelectorAll('input[data-action="dropreps"]').forEach(function (input) {
+      input.addEventListener('input', function () {
+        var st = stateForKey(input.dataset.key);
+        var seg = st && st.dropSegments && st.dropSegments[input.dataset.idx];
+        if (!seg) return;
+        var v = input.value === '' ? null : parseInt(input.value, 10);
+        seg.reps = (v != null && isNaN(v)) ? null : v;
       });
     });
     // Entry row (the pending "next set"): Enter submits it. Typing updates session.pendingEntries
@@ -2035,24 +2300,33 @@
         var pend = session.pendingEntries[blockId] || (session.pendingEntries[blockId] = { weight: '', reps: '', touched: false });
         pend.touched = true;
         input.classList.remove('prefilled');
-        if (input.id.indexOf('w-') === 0) pend.weight = input.value; else pend.reps = input.value;
+        var target = pend;
+        if (input.dataset.side === 'right') target = pend.right || (pend.right = { weight: '', reps: '' });
+        if (input.dataset.field === 'weight') target.weight = input.value; else target.reps = input.value;
       });
     });
     // Already-logged sets stay editable — tapping in and changing the value updates that set in place.
+    // Clearing a field back to blank puts the set back into "needs weight" state rather than being ignored.
     el.querySelectorAll('input[data-action="editweight"]').forEach(function (input) {
       input.addEventListener('change', function () {
         var s = session.sets.find(function (x) { return x.localId === input.dataset.setid; });
         if (!s) return;
-        var v = parseFloat(input.value);
-        if (!isNaN(v)) { s.weight = v; renderSession(); }
+        var v = input.value === '' ? null : parseFloat(input.value);
+        if (v != null && isNaN(v)) return;
+        if (input.dataset.side === 'right') { if (!s.right) s.right = { weight: null, reps: null }; s.right.weight = v; }
+        else s.weight = v;
+        renderSession();
       });
     });
     el.querySelectorAll('input[data-action="editreps"]').forEach(function (input) {
       input.addEventListener('change', function () {
         var s = session.sets.find(function (x) { return x.localId === input.dataset.setid; });
         if (!s) return;
-        var v = parseInt(input.value, 10);
-        if (!isNaN(v)) { s.reps = v; renderSession(); }
+        var v = input.value === '' ? null : parseInt(input.value, 10);
+        if (v != null && isNaN(v)) return;
+        if (input.dataset.side === 'right') { if (!s.right) s.right = { weight: null, reps: null }; s.right.reps = v; }
+        else s.reps = v;
+        renderSession();
       });
     });
     // Tapping into any weight/reps field (prefilled entry or an already-logged set) selects
@@ -2066,9 +2340,15 @@
     var isSuperset = block.items.length > 1;
     var checkboxes = block.items.map(function (item) {
       var checked = selectedLocalIds.indexOf(item.localId) !== -1;
+      var mode = itemMode[item.localId] || 'bilateral';
       return '<span class="select-check ' + (checked ? 'checked' : '') + '" data-action="select" data-local="' + item.localId + '">' + (checked ? '✓' : '') + '</span>' +
         '<span class="name">' + escapeHtml(item.name) + '</span>' +
         (isSuperset ? '' : equipmentChipHtml(item.equipment)) +
+        '<select class="mode-select" data-item="' + item.localId + '" title="Unilateral logging">' +
+          '<option value="bilateral"' + (mode === 'bilateral' ? ' selected' : '') + '>Bilateral</option>' +
+          '<option value="both"' + (mode === 'both' ? ' selected' : '') + '>Per Side (Same)</option>' +
+          '<option value="independent"' + (mode === 'independent' ? ' selected' : '') + '>Per Side (L/R)</option>' +
+        '</select>' +
         '<button class="remove-x" data-action="remove" data-local="' + item.localId + '">✕</button>';
     }).join('<span class="muted" style="margin:0 4px;">+</span>');
 
@@ -2080,13 +2360,7 @@
     // A set seeded from a saved workout starts with no weight (needs-weight highlight) until filled in.
     var rowsHtml = rows.map(function (s) {
       var item = block.items.find(function (i) { return i.localId === s.itemLocalId; }) || {};
-      var needsWeight = s.weight == null;
-      return '<div class="set-table-row">' +
-        '<span class="cell-exercise">' + escapeHtml(item.name || '') + '</span>' +
-        '<input type="number" inputmode="decimal" class="cell-num' + (needsWeight ? ' needs-weight' : '') + '" placeholder="lbs" data-action="editweight" data-setid="' + s.localId + '"' + (needsWeight ? '' : ' value="' + escapeHtml(s.weight) + '"') + '>' +
-        '<input type="number" inputmode="numeric" class="cell-num" data-action="editreps" data-setid="' + s.localId + '" value="' + escapeHtml(s.reps) + '">' +
-        '<button class="del" data-action="delset" data-setid="' + s.localId + '">✕</button>' +
-      '</div>';
+      return renderLoggedSetRow(s, item);
     }).join('');
 
     var defaultItem = entrySelection[block.blockId] && block.items.some(function (i) { return i.localId === entrySelection[block.blockId]; })
@@ -2103,10 +2377,12 @@
 
     var selectedItem = block.items.find(function (i) { return i.localId === defaultItem; }) || block.items[0];
     var isBodyweightEntry = selectedItem.equipment === 'Bodyweight';
+    var mode = itemMode[selectedItem.localId] || 'bilateral';
+    var defaultTempo = exerciseDefaultTempo(selectedItem.exerciseId);
 
-    // Carry forward the last logged set for whichever exercise is selected in the
-    // entry row, so the next set starts prefilled (shown grey) with the same numbers.
-    var lastForItem = rows.filter(function (s) { return s.itemLocalId === defaultItem && s.weight != null; }).slice(-1)[0];
+    // Carry forward the last logged (non-independent) set for whichever exercise is selected
+    // in the entry row, so the next set starts prefilled (shown grey) with the same numbers.
+    var lastForItem = rows.filter(function (s) { return s.itemLocalId === defaultItem && s.mode !== 'independent' && s.weight != null; }).slice(-1)[0];
 
     if (isBodyweightEntry && entrySign[block.blockId] == null) {
       entrySign[block.blockId] = (lastForItem && lastForItem.weight < 0) ? -1 : 1;
@@ -2123,60 +2399,122 @@
     }
     var pending = session.pendingEntries[block.blockId];
     var prefilledClass = (!pending.touched && (pending.weight !== '' || pending.reps !== '')) ? ' prefilled' : '';
+    var weightPlaceholder = mode === 'both' ? 'lbs/side' : 'lbs';
+    var repsPlaceholder = mode === 'both' ? 'reps/side' : 'reps';
 
-    var weightInput = '<input type="number" inputmode="decimal" class="cell-num entry-num' + prefilledClass + '" placeholder="lbs" id="w-' + block.blockId + '" data-block="' + block.blockId + '" value="' + escapeHtml(pending.weight) + '">';
-    var repsInput = '<input type="number" inputmode="numeric" class="cell-num entry-num' + prefilledClass + '" placeholder="reps" id="r-' + block.blockId + '" data-block="' + block.blockId + '" value="' + escapeHtml(pending.reps) + '">';
+    var entryHtml;
+    if (mode === 'independent') {
+      if (!pending.right) pending.right = { weight: '', reps: '' };
+      var leftWeightInput = '<input type="number" inputmode="decimal" class="cell-num entry-num" placeholder="lbs" id="w-left-' + block.blockId + '" data-block="' + block.blockId + '" data-side="left" data-field="weight" value="' + escapeHtml(pending.weight) + '">';
+      var leftRepsInput = '<input type="number" inputmode="numeric" class="cell-num entry-num" placeholder="reps" id="r-left-' + block.blockId + '" data-block="' + block.blockId + '" data-side="left" data-field="reps" value="' + escapeHtml(pending.reps) + '">';
+      var leftWeightCell = isBodyweightEntry
+        ? '<span class="weight-with-sign"><button type="button" class="sign-toggle ' + (signIsNeg ? 'neg' : 'pos') + '" data-action="togglesign" data-block="' + block.blockId + '" title="' + (signIsNeg ? 'Assisted (subtract)' : 'Added weight') + '">' + (signIsNeg ? '−' : '+') + '</button>' + leftWeightInput + '</span>'
+        : leftWeightInput;
+      var rightWeightInput = '<input type="number" inputmode="decimal" class="cell-num entry-num" placeholder="lbs" id="w-right-' + block.blockId + '" data-block="' + block.blockId + '" data-side="right" data-field="weight" value="' + escapeHtml(pending.right.weight) + '">';
+      var rightRepsInput = '<input type="number" inputmode="numeric" class="cell-num entry-num" placeholder="reps" id="r-right-' + block.blockId + '" data-block="' + block.blockId + '" data-side="right" data-field="reps" value="' + escapeHtml(pending.right.reps) + '">';
+      entryHtml =
+        '<div class="set-table-row">' + exerciseCell + leftWeightCell + leftRepsInput + '<span></span></div>' +
+        '<div class="set-table-row sub"><span class="cell-exercise">↳ R</span>' + rightWeightInput + rightRepsInput + '<span></span></div>';
+    } else {
+      var weightInput = '<input type="number" inputmode="decimal" class="cell-num entry-num' + prefilledClass + '" placeholder="' + weightPlaceholder + '" id="w-' + block.blockId + '" data-block="' + block.blockId + '" data-field="weight" value="' + escapeHtml(pending.weight) + '">';
+      var repsInput = '<input type="number" inputmode="numeric" class="cell-num entry-num' + prefilledClass + '" placeholder="' + repsPlaceholder + '" id="r-' + block.blockId + '" data-block="' + block.blockId + '" data-field="reps" value="' + escapeHtml(pending.reps) + '">';
+      var weightCell = isBodyweightEntry
+        ? '<span class="weight-with-sign"><button type="button" class="sign-toggle ' + (signIsNeg ? 'neg' : 'pos') + '" data-action="togglesign" data-block="' + block.blockId + '" title="' + (signIsNeg ? 'Assisted (subtract)' : 'Added weight') + '">' + (signIsNeg ? '−' : '+') + '</button>' + weightInput + '</span>'
+        : weightInput;
+      entryHtml = '<div class="set-table-row">' + exerciseCell + weightCell + repsInput + '<span></span></div>';
+    }
 
-    var weightCell = isBodyweightEntry
-      ? '<span class="weight-with-sign">' +
-          '<button type="button" class="sign-toggle ' + (signIsNeg ? 'neg' : 'pos') + '" data-action="togglesign" data-block="' + block.blockId + '" title="' + (signIsNeg ? 'Assisted (subtract)' : 'Added weight') + '">' + (signIsNeg ? '−' : '+') + '</button>' +
-          weightInput +
-        '</span>'
-      : weightInput;
-
-    var entryRow = '<div class="set-table-row">' +
-      exerciseCell +
-      weightCell +
-      repsInput +
-      '<span></span>' +
-    '</div>' +
-    '<button type="button" class="add-set-row-btn" data-action="addset" data-block="' + block.blockId + '">+ Add Set</button>';
+    var adv = getEntryAdvanced(block.blockId);
+    var advancedHtml = adv.open
+      ? renderAdvancedPanel('entry:' + block.blockId, adv, defaultTempo, false)
+      : '<button type="button" class="advanced-toggle" data-action="toggleentryadv" data-block="' + block.blockId + '">⚙ Failure / Tempo</button>';
 
     return '<div class="block-card-head"><div class="titles">' + checkboxes + '</div></div>' +
       '<div class="set-table">' +
         '<div class="set-table-row head"><span>Exercise</span><span>Weight (lbs)</span><span>Reps</span><span></span></div>' +
         rowsHtml +
-        entryRow +
+        entryHtml +
+        advancedHtml +
+        '<button type="button" class="add-set-row-btn" data-action="addset" data-block="' + block.blockId + '">+ Add Set</button>' +
       '</div>';
   }
 
   function toggleEntrySign(blockId) {
     entrySign[blockId] = entrySign[blockId] === -1 ? 1 : -1;
     renderSession();
-    var newW = $('w-' + blockId);
+    var newW = $('w-' + blockId) || $('w-left-' + blockId);
     if (newW) newW.focus();
+  }
+
+  function currentEntryMode(blockId) {
+    return itemMode[entrySelection[blockId]] || 'bilateral';
+  }
+
+  // Reads the pending entry row's DOM values for a block, shaped by its current mode.
+  // Returns null if the row isn't rendered (e.g. block no longer exists).
+  function readEntryData(blockId) {
+    var mode = currentEntryMode(blockId);
+    if (mode === 'independent') {
+      var lw = $('w-left-' + blockId);
+      if (!lw) return null;
+      var leftWeight = lw.value === '' ? null : parseFloat(lw.value);
+      var leftReps = $('r-left-' + blockId).value === '' ? null : parseInt($('r-left-' + blockId).value, 10);
+      var rightWeight = $('w-right-' + blockId).value === '' ? null : parseFloat($('w-right-' + blockId).value);
+      var rightReps = $('r-right-' + blockId).value === '' ? null : parseInt($('r-right-' + blockId).value, 10);
+      if (leftWeight != null && isNaN(leftWeight)) leftWeight = null;
+      if (rightWeight != null && isNaN(rightWeight)) rightWeight = null;
+      if (leftReps != null && isNaN(leftReps)) leftReps = null;
+      if (rightReps != null && isNaN(rightReps)) rightReps = null;
+      return { mode: mode, leftWeight: leftWeight, leftReps: leftReps, rightWeight: rightWeight, rightReps: rightReps };
+    }
+    var wEl = $('w-' + blockId), rEl = $('r-' + blockId);
+    if (!wEl || !rEl) return null;
+    return { mode: mode, weight: parseFloat(wEl.value), reps: parseInt(rEl.value, 10) };
   }
 
   // Shared by the "+ Add Set" button and the auto-commit-on-save sweep below.
-  function commitSetForBlock(blockId, magnitude, reps) {
+  function commitSetForBlock(blockId, data) {
     var itemLocalId = entrySelection[blockId];
     var item = session.items.find(function (i) { return i.localId === itemLocalId; });
-    var weight = magnitude;
-    if (item && item.equipment === 'Bodyweight') {
-      weight = Math.abs(magnitude) * (entrySign[blockId] === -1 ? -1 : 1);
+    var isBW = item && item.equipment === 'Bodyweight';
+    var sign = entrySign[blockId] === -1 ? -1 : 1;
+    var adv = getEntryAdvanced(blockId);
+
+    var set = {
+      localId: uid(), itemLocalId: itemLocalId, mode: data.mode,
+      toFailure: adv.toFailure, tempo: adv.tempo, dropSegments: []
+    };
+
+    if (data.mode === 'independent') {
+      set.weight = data.leftWeight != null ? (isBW ? Math.abs(data.leftWeight) * sign : data.leftWeight) : null;
+      set.reps = data.leftReps;
+      set.right = (data.rightWeight != null || data.rightReps != null)
+        ? { weight: data.rightWeight != null ? (isBW ? Math.abs(data.rightWeight) * sign : data.rightWeight) : null, reps: data.rightReps }
+        : null;
+    } else {
+      set.weight = isBW ? Math.abs(data.weight) * sign : data.weight;
+      set.reps = data.reps;
     }
-    session.sets.push({ localId: uid(), itemLocalId: itemLocalId, weight: weight, reps: reps });
+
+    session.sets.push(set);
     delete session.pendingEntries[blockId]; // next render re-derives a fresh prefill from this new set
+    adv.toFailure = false; // one-off per set; tempo persists (usually the same scheme across an exercise's sets)
   }
 
   function addSet(blockId) {
-    var wEl = $('w-' + blockId), rEl = $('r-' + blockId);
-    var magnitude = parseFloat(wEl.value), reps = parseInt(rEl.value, 10);
-    if (isNaN(magnitude) || isNaN(reps)) { showToast('Enter weight and reps', true); return; }
-    commitSetForBlock(blockId, magnitude, reps);
+    var data = readEntryData(blockId);
+    if (!data) return;
+    if (data.mode === 'independent') {
+      if (data.leftWeight == null && data.leftReps == null && data.rightWeight == null && data.rightReps == null) {
+        showToast('Enter at least one side', true); return;
+      }
+    } else if (isNaN(data.weight) || isNaN(data.reps)) {
+      showToast('Enter weight and reps', true); return;
+    }
+    commitSetForBlock(blockId, data);
     renderSession();
-    var newW = $('w-' + blockId);
-    if (newW) newW.focus();
+    var refocus = $('w-' + blockId) || $('w-left-' + blockId);
+    if (refocus) refocus.focus();
   }
 
   // Sweeps every visible-but-unconfirmed entry row and commits it as a real set
@@ -2185,17 +2523,32 @@
   function commitPendingEntryRows() {
     if (!session) return;
     groupByBlock(session.items).forEach(function (block) {
-      var wEl = $('w-' + block.blockId), rEl = $('r-' + block.blockId);
-      if (!wEl || !rEl) return;
-      var magnitude = parseFloat(wEl.value), reps = parseInt(rEl.value, 10);
-      if (isNaN(magnitude) || isNaN(reps)) return;
-      if (magnitude === 0 && reps === 0) return;
-      commitSetForBlock(block.blockId, magnitude, reps);
+      var data = readEntryData(block.blockId);
+      if (!data) return;
+      if (data.mode === 'independent') {
+        if (data.leftWeight == null && data.leftReps == null && data.rightWeight == null && data.rightReps == null) return;
+      } else {
+        if (isNaN(data.weight) || isNaN(data.reps)) return;
+        if (data.weight === 0 && data.reps === 0) return;
+      }
+      commitSetForBlock(block.blockId, data);
     });
   }
 
-  function deleteSet(setLocalId) {
-    session.sets = session.sets.filter(function (s) { return s.localId !== setLocalId; });
+  // side omitted -> delete the whole logical set. side given -> clear just that
+  // side of an independent set, dropping the whole thing only once both sides are empty.
+  function deleteSet(setLocalId, side) {
+    if (side) {
+      var s = session.sets.find(function (x) { return x.localId === setLocalId; });
+      if (!s) return;
+      if (side === 'left') { s.weight = null; s.reps = null; }
+      else if (side === 'right') { s.right = null; }
+      var leftEmpty = s.weight == null && s.reps == null;
+      var rightEmpty = !s.right || (s.right.weight == null && s.right.reps == null);
+      if (leftEmpty && rightEmpty) session.sets = session.sets.filter(function (x) { return x.localId !== setLocalId; });
+    } else {
+      session.sets = session.sets.filter(function (x) { return x.localId !== setLocalId; });
+    }
     renderSession();
   }
 
@@ -2216,6 +2569,12 @@
     });
   }
 
+  // Raw DB rows -> in-session logical sets. The one place this reconstruction
+  // happens for editing (history view has its own copy, groupSetsByBlock,
+  // since it doesn't need editable session state). Two rows sharing
+  // (blockId, exerciseId, position) with side left/right are the two sides
+  // of ONE logged set — getting this right is what lets editing a workout
+  // round-trip without silently dropping tempo/failure/drops/side.
   function loadWorkoutIntoSessionAfterSetup(workout, date, name) {
     session = { id: workout.id, date: date, name: name, items: [], sets: [], pendingEntries: {} };
     sessionMode = 'edit';
@@ -2223,22 +2582,69 @@
     selectedLocalIds = [];
     entrySelection = {};
     entrySign = {};
+    itemMode = {};
+    entryAdvanced = {};
+    expandedSetPanels = {};
 
     var itemKeyMap = {};
+    var byPosition = {}; // "blockId|exerciseId|position" -> { itemLocalId, left, right, plain }
+    var posOrder = [];
     workout.sets.forEach(function (s) {
-      var key = s.blockId + '|' + s.exerciseId;
-      if (!itemKeyMap[key]) {
+      var itemKey = s.blockId + '|' + s.exerciseId;
+      if (!itemKeyMap[itemKey]) {
         var localId = uid();
-        itemKeyMap[key] = localId;
+        itemKeyMap[itemKey] = localId;
         session.items.push({ localId: localId, exerciseId: s.exerciseId, name: s.exerciseName, category: s.exerciseCategory, equipment: s.exerciseEquipment || '', blockId: s.blockId });
       }
-      session.sets.push({ localId: uid(), itemLocalId: itemKeyMap[key], weight: s.weight, reps: s.reps });
+      var posKey = itemKey + '|' + s.position;
+      if (!byPosition[posKey]) { byPosition[posKey] = { itemLocalId: itemKeyMap[itemKey] }; posOrder.push(posKey); }
+      if (s.side === 'left') byPosition[posKey].left = s;
+      else if (s.side === 'right') byPosition[posKey].right = s;
+      else byPosition[posKey].plain = s;
+    });
+
+    posOrder.forEach(function (posKey) {
+      var b = byPosition[posKey];
+      if (b.left || b.right) {
+        var primary = b.left || b.right;
+        session.sets.push({
+          localId: uid(), itemLocalId: b.itemLocalId, mode: 'independent',
+          weight: b.left ? b.left.weight : null, reps: b.left ? b.left.reps : null,
+          right: b.right ? { weight: b.right.weight, reps: b.right.reps } : null,
+          toFailure: !!primary.toFailure, tempo: primary.tempo || null, dropSegments: primary.dropSegments || []
+        });
+        itemMode[b.itemLocalId] = 'independent';
+      } else {
+        var s = b.plain;
+        session.sets.push({
+          localId: uid(), itemLocalId: b.itemLocalId, mode: s.side === 'both' ? 'both' : 'bilateral',
+          weight: s.weight, reps: s.reps,
+          toFailure: !!s.toFailure, tempo: s.tempo || null, dropSegments: s.dropSegments || []
+        });
+        if (s.side === 'both') itemMode[b.itemLocalId] = 'both';
+      }
     });
 
     if (!exercisesCache.length) {
       apiGet('getExercises').then(function (data) { exercisesCache = data; }).catch(function () {});
     }
     showLogActiveView();
+  }
+
+  // In-session logical set -> the wire shape supabase-api.js's buildSetRows expects.
+  // Independent mode sends {left, right} (each optional — one side can be logged
+  // without the other); everything else sends flat weight/reps + side.
+  function toWireSet(s) {
+    if (s.mode === 'independent') {
+      var w = { toFailure: s.toFailure, tempo: s.tempo, dropSegments: s.dropSegments };
+      if (s.weight != null) w.left = { weight: s.weight, reps: s.reps };
+      if (s.right && s.right.weight != null) w.right = { weight: s.right.weight, reps: s.right.reps };
+      return w;
+    }
+    return {
+      weight: s.weight, reps: s.reps, side: s.mode === 'both' ? 'both' : null,
+      toFailure: s.toFailure, tempo: s.tempo, dropSegments: s.dropSegments
+    };
   }
 
   $('saveWorkoutBtn').addEventListener('click', function () {
@@ -2250,7 +2656,10 @@
 
     // Sets seeded from a saved workout but never given a weight aren't logged yet — leave
     // them out of what actually saves (they just stay on screen, still waiting to be filled in).
-    var loggedSets = session.sets.filter(function (s) { return s.weight != null; });
+    // For an independent left/right set, either side alone is enough to count as logged.
+    var loggedSets = session.sets.filter(function (s) {
+      return s.weight != null || (s.right && s.right.weight != null);
+    });
     if (!loggedSets.length) { showToast('Log at least one set (enter a weight)', true); return; }
 
     // Build payload per item (not per block) since a superset block can hold
@@ -2259,8 +2668,7 @@
       return {
         exerciseId: item.exerciseId,
         blockId: item.blockId,
-        sets: loggedSets.filter(function (s) { return s.itemLocalId === item.localId; })
-          .map(function (s) { return { weight: s.weight, reps: s.reps }; })
+        sets: loggedSets.filter(function (s) { return s.itemLocalId === item.localId; }).map(toWireSet)
       };
     }).filter(function (i) { return i.sets.length > 0; });
 
@@ -2316,15 +2724,41 @@
         var isSuperset = block.exerciseGroups.length > 1;
         var inner = block.exerciseGroups.map(function (g) {
           var isBw = g.exerciseEquipment === 'Bodyweight';
+          var defaultTempo = exerciseDefaultTempo(g.exerciseId);
+          function weightLabel(v) { return isBw && v > 0 ? '+' + v : String(v); }
           var setsHtml = g.sets.map(function (s, idx) {
-            var weightLabel = isBw && s.weight > 0 ? '+' + s.weight : String(s.weight);
-            return '<div class="set-table-row"><span>Set ' + (idx + 1) + '</span><span>' + escapeHtml(weightLabel) + ' lbs</span><span>' + escapeHtml(s.reps) + ' reps</span><span></span></div>';
+            var primary = s.primary;
+            var effTempo = primary.tempo || defaultTempo;
+            var badges =
+              (primary.toFailure ? '<span class="set-badge failure">Failure</span>' : '') +
+              (effTempo ? '<span class="set-badge tempo">' + escapeHtml(tempoLabel(effTempo)) + '</span>' : '');
+            var badgesHtml = badges ? '<span class="set-badges">' + badges + '</span>' : '';
+            var html;
+            if (s.mode === 'independent') {
+              html =
+                '<div class="set-table-row"><span>Set ' + (idx + 1) + badgesHtml + '</span><span>' +
+                  (s.left ? escapeHtml(weightLabel(s.left.weight)) + ' lbs' : '—') + '</span><span>' +
+                  (s.left ? escapeHtml(s.left.reps) + ' reps' : '—') + '</span><span></span></div>' +
+                '<div class="set-table-row sub"><span>↳ R</span><span>' +
+                  (s.right ? escapeHtml(weightLabel(s.right.weight)) + ' lbs' : '—') + '</span><span>' +
+                  (s.right ? escapeHtml(s.right.reps) + ' reps' : '—') + '</span><span></span></div>';
+            } else {
+              var label = 'Set ' + (idx + 1) + (s.mode === 'both' ? ' (per side)' : '');
+              html = '<div class="set-table-row"><span>' + escapeHtml(label) + badgesHtml + '</span><span>' + escapeHtml(weightLabel(s.weight)) + ' lbs</span><span>' + escapeHtml(s.reps) + ' reps</span><span></span></div>';
+              (primary.dropSegments || []).forEach(function (seg, dIdx) {
+                html += '<div class="set-table-row sub"><span>↳ Drop ' + (dIdx + 1) + '</span><span>' + escapeHtml(weightLabel(seg.weight)) + ' lbs</span><span>' + escapeHtml(seg.reps) + ' reps</span><span></span></div>';
+              });
+            }
+            return html;
           }).join('');
           return '<div class="block-card"><div class="name">' + escapeHtml(g.exerciseName) +
             '</div>' + chipHtml(g.exerciseCategory) +
             '<div class="set-table">' + setsHtml + '</div></div>';
         }).join('');
-        if (isSuperset) return '<div class="superset-block"><div class="superset-label">🔗 Superset</div>' + inner + '</div>';
+        if (isSuperset) {
+          var label = block.exerciseGroups.length === 2 ? 'Superset' : (block.exerciseGroups.length === 3 ? 'Tri-Set' : 'Giant Set');
+          return '<div class="superset-block"><div class="superset-label">🔗 ' + label + '</div>' + inner + '</div>';
+        }
         return inner;
       }).join('') || '<div class="empty-state">No sets recorded.</div>';
 
@@ -2362,20 +2796,48 @@
     });
   }
 
+  // Raw DB rows -> logical sets for read-only history display. Two rows sharing
+  // (exerciseId, position) with side left/right are the two sides of one set —
+  // same reconstruction rule as loadWorkoutIntoSessionAfterSetup, just producing
+  // a display-shaped object instead of editable session state.
   function groupSetsByBlock(sets) {
     var blockOrder = [], blockMap = {};
     sets.forEach(function (s) {
       if (!blockMap[s.blockId]) { blockMap[s.blockId] = { blockId: s.blockId, exOrder: [], exMap: {} }; blockOrder.push(s.blockId); }
       var b = blockMap[s.blockId];
       if (!b.exMap[s.exerciseId]) {
-        b.exMap[s.exerciseId] = { exerciseName: s.exerciseName, exerciseCategory: s.exerciseCategory, exerciseEquipment: s.exerciseEquipment, sets: [] };
+        b.exMap[s.exerciseId] = {
+          exerciseId: s.exerciseId, exerciseName: s.exerciseName, exerciseCategory: s.exerciseCategory,
+          exerciseEquipment: s.exerciseEquipment, byPosition: {}, posOrder: []
+        };
         b.exOrder.push(s.exerciseId);
       }
-      b.exMap[s.exerciseId].sets.push({ weight: s.weight, reps: s.reps });
+      var ex = b.exMap[s.exerciseId];
+      if (!ex.byPosition[s.position]) { ex.byPosition[s.position] = {}; ex.posOrder.push(s.position); }
+      var slot = ex.byPosition[s.position];
+      if (s.side === 'left') slot.left = s;
+      else if (s.side === 'right') slot.right = s;
+      else slot.plain = s;
     });
     return blockOrder.map(function (blockId) {
       var b = blockMap[blockId];
-      return { blockId: blockId, exerciseGroups: b.exOrder.map(function (exId) { return b.exMap[exId]; }) };
+      return {
+        blockId: blockId,
+        exerciseGroups: b.exOrder.map(function (exId) {
+          var ex = b.exMap[exId];
+          var logicalSets = ex.posOrder.map(function (pos) {
+            var slot = ex.byPosition[pos];
+            if (slot.left || slot.right) {
+              return { mode: 'independent', left: slot.left, right: slot.right, primary: slot.left || slot.right };
+            }
+            return { mode: slot.plain.side === 'both' ? 'both' : 'bilateral', weight: slot.plain.weight, reps: slot.plain.reps, primary: slot.plain };
+          });
+          return {
+            exerciseId: ex.exerciseId, exerciseName: ex.exerciseName, exerciseCategory: ex.exerciseCategory,
+            exerciseEquipment: ex.exerciseEquipment, sets: logicalSets
+          };
+        })
+      };
     });
   }
 

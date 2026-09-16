@@ -45,6 +45,15 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
 
   // ---------- shared read helpers ----------
 
+  function mapExercise(r) {
+    return {
+      id: r.id, name: r.name,
+      category: r.category || '', equipment: r.equipment || '',
+      muscles: toArray(r.muscles),
+      defaultTempo: r.default_tempo || null
+    };
+  }
+
   function exerciseNameMap() {
     return client().from('exercises').select('id,name,category,equipment').then(take).then(function (rows) {
       var map = {};
@@ -110,13 +119,7 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
     getExercises: function () {
       return client().from('exercises').select('*').order('name', { ascending: true })
         .then(take).then(function (rows) {
-          return (rows || []).map(function (r) {
-            return {
-              id: r.id, name: r.name,
-              category: r.category || '', equipment: r.equipment || '',
-              muscles: toArray(r.muscles)
-            };
-          });
+          return (rows || []).map(mapExercise);
         });
     },
 
@@ -143,7 +146,7 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       return Promise.all([
         client().from('workouts').select('*').eq('id', id).single().then(take),
         client().from('sets')
-          .select('id,workout_id,block_id,exercise_id,weight,reps,position,exercises(name,category,equipment)')
+          .select('id,workout_id,block_id,exercise_id,weight,reps,position,to_failure,tempo,side,drop_segments,notes,exercises(name,category,equipment)')
           .eq('workout_id', id).order('position', { ascending: true }).then(take)
       ]).then(function (out) {
         var w = out[0];
@@ -158,7 +161,13 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
             exerciseCategory: ex.category || '',
             exerciseEquipment: ex.equipment || '',
             weight: r.weight,
-            reps: r.reps
+            reps: r.reps,
+            position: r.position,
+            toFailure: !!r.to_failure,
+            tempo: r.tempo || null,
+            side: r.side || null,
+            dropSegments: Array.isArray(r.drop_segments) ? r.drop_segments : [],
+            notes: r.notes || null
           };
         });
         return {
@@ -170,13 +179,23 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
     getExerciseRecords: function (params) {
       var exerciseId = params && params.exerciseId;
       if (!exerciseId) throw new Error('Exercise id is required');
-      return client().from('sets').select('weight,reps').eq('exercise_id', exerciseId)
+      return client().from('sets').select('weight,reps,drop_segments').eq('exercise_id', exerciseId)
         .then(take).then(function (rows) {
           var byReps = {};
-          (rows || []).forEach(function (r) {
-            var reps = Number(r.reps), weight = Number(r.weight);
+          function consider(reps, weight) {
+            reps = Number(reps); weight = Number(weight);
             if (isNaN(reps) || isNaN(weight)) return;
             if (!(reps in byReps) || weight > byReps[reps]) byReps[reps] = weight;
+          }
+          // A drop set is one logical set, but every completed segment (primary
+          // effort + each drop) is a real performance and counts toward the
+          // per-rep-count record on its own. `side: 'both'` rows already store
+          // the single-side weight (not doubled), so no special-casing needed there.
+          (rows || []).forEach(function (r) {
+            consider(r.reps, r.weight);
+            (Array.isArray(r.drop_segments) ? r.drop_segments : []).forEach(function (seg) {
+              if (seg && seg.weight != null) consider(seg.reps, seg.weight);
+            });
           });
           return Object.keys(byReps)
             .map(function (k) { return { reps: Number(k), weight: byReps[k] }; })
@@ -205,21 +224,50 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
 
   // ---------- POST actions ----------
 
+  // Each entry in item.sets is ONE LOGICAL SET, which becomes either one row
+  // (the common case, and 'both'-mode unilateral) or two rows sharing one
+  // `position` (independent left/right — pass `{ left: {weight,reps}, right: {weight,reps} }`
+  // instead of top-level weight/reps). `position` is a single counter shared
+  // across the whole workout, so it's globally unique per logical set —
+  // that's what lets set_count just count distinct positions. See
+  // ADVANCED-LOGGING-DESIGN.md.
   function buildSetRows(workoutId, items) {
     var rows = [];
+    var counter = 0;
     (items || []).forEach(function (item) {
       (item.sets || []).forEach(function (s) {
-        rows.push({
-          workout_id: workoutId,
-          block_id: item.blockId || null,
-          exercise_id: item.exerciseId,
-          weight: s.weight,
-          reps: s.reps,
-          position: rows.length
-        });
+        var position = counter++;
+        var toFailure = !!s.toFailure;
+        var tempo = s.tempo || null;
+        var dropSegments = Array.isArray(s.dropSegments) ? s.dropSegments : [];
+        var notes = s.notes || null;
+        function row(side, weight, reps) {
+          return {
+            workout_id: workoutId, block_id: item.blockId || null, exercise_id: item.exerciseId,
+            position: position, side: side, weight: weight, reps: reps,
+            to_failure: toFailure, tempo: tempo, drop_segments: dropSegments, notes: notes
+          };
+        }
+        if (s.left || s.right) {
+          if (s.left)  rows.push(row('left',  s.left.weight,  s.left.reps));
+          if (s.right) rows.push(row('right', s.right.weight, s.right.reps));
+        } else {
+          rows.push(row(s.side || null, s.weight, s.reps));
+        }
       });
     });
     return rows;
+  }
+
+  // Mirrors workouts_with_counts' set_count: distinct position — a left/right
+  // pair shares one position and so counts once, as one logical set.
+  function countLogicalSets(rows) {
+    var seen = {};
+    var n = 0;
+    rows.forEach(function (r) {
+      if (!seen[r.position]) { seen[r.position] = true; n++; }
+    });
+    return n;
   }
 
   var POST = {
@@ -227,21 +275,22 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       var name = (b.name || '').trim();
       if (!name) throw new Error('Exercise name is required');
       return client().from('exercises').insert({
-        name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles)
-      }).select().single().then(take).then(function (r) {
-        return { id: r.id, name: r.name, category: r.category || '', equipment: r.equipment || '', muscles: toArray(r.muscles) };
-      });
+        name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles),
+        default_tempo: b.defaultTempo || null
+      }).select().single().then(take).then(mapExercise);
     },
 
     updateExercise: function (b) {
       if (!b.id) throw new Error('Exercise id is required');
       var name = (b.name || '').trim();
       if (!name) throw new Error('Exercise name is required');
-      return client().from('exercises').update({
-        name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles)
-      }).eq('id', b.id).select().single().then(take).then(function (r) {
-        return { id: r.id, name: r.name, category: r.category || '', equipment: r.equipment || '', muscles: toArray(r.muscles) };
-      });
+      var patch = { name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles) };
+      // Only touch default_tempo when the caller actually sent it — the existing
+      // edit-exercise form doesn't know about tempo yet, and it must not wipe
+      // out a default set elsewhere just because it wasn't in this particular payload.
+      if ('defaultTempo' in b) patch.default_tempo = b.defaultTempo || null;
+      return client().from('exercises').update(patch)
+        .eq('id', b.id).select().single().then(take).then(mapExercise);
     },
 
     deleteExercise: function (b) {
@@ -263,7 +312,7 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
         var rows = buildSetRows(w.id, b.items);
         if (!rows.length) throw new Error('Workout has no sets to save');
         return client().from('sets').insert(rows).then(take).then(function () {
-          return { id: w.id, date: b.date, setCount: rows.length };
+          return { id: w.id, date: b.date, setCount: countLogicalSets(rows) };
         });
       });
     },
@@ -279,7 +328,7 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       }).eq('id', b.id).then(take)
         .then(function () { return client().from('sets').delete().eq('workout_id', b.id).then(take); })
         .then(function () { return client().from('sets').insert(rows).then(take); })
-        .then(function () { return { id: b.id, date: b.date, setCount: rows.length }; });
+        .then(function () { return { id: b.id, date: b.date, setCount: countLogicalSets(rows) }; });
     },
 
     deleteWorkout: function (b) {
