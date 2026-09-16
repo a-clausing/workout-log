@@ -254,7 +254,7 @@
   .advanced-panel {
     background: var(--card-soft); border-radius: var(--radius-md); padding: 10px; margin: 4px 0 10px;
   }
-  .advanced-panel .field-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  .field-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
   .advanced-panel .tempo-label { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
   .tempo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
   .tempo-field label { font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 2px; }
@@ -430,7 +430,7 @@
         <div class="field" id="newExEquipmentField"></div>
         <div class="field" id="newExCategoryField"></div>
         <div class="field" id="newExMusclesField"></div>
-        <div class="field" id="newExTempoField"></div>
+        <label class="field-row"><input type="checkbox" id="newExUnilateral"> Unilateral (single-side exercise)</label>
         <button class="btn block" id="submitNewExerciseBtn">Save Exercise</button>
       </div>
 
@@ -504,11 +504,6 @@
 
       <button type="button" class="log-summary-btn" id="logActiveSummaryBtn"></button>
 
-      <div id="linkBar" style="display:none; margin-bottom:12px;">
-        <button class="btn secondary" id="linkSelectedBtn">Link as Superset</button>
-        <button class="btn-sm" id="cancelSelectBtn" style="margin-left:8px;">Cancel</button>
-      </div>
-
       <div id="sessionExerciseList"></div>
 
       <div class="field" style="margin-top:16px;">
@@ -563,13 +558,12 @@
   //   dropSegments: [{weight, reps}, ...] performed after the primary effort
   var session = null;
   var sessionMode = 'new'; // 'new' | 'edit'
-  var selectMode = false;
-  var selectedLocalIds = [];
   var entrySelection = {}; // blockId -> itemLocalId, sticky exercise choice for superset entry rows
   var entrySign = {}; // blockId -> 1 | -1, sticky +/- for Bodyweight entry rows (added weight vs. assisted)
   var itemMode = {}; // itemLocalId -> 'bilateral' | 'both' | 'independent', sticky per exercise-in-session
   var entryAdvanced = {}; // blockId -> {open, toFailure, tempo} pending failure/tempo for the NEXT set
   var expandedSetPanels = {}; // setLocalId -> true, whether an already-logged set's Failure/Tempo panel is open
+  var supersetBuilder = null; // { originItemLocalId, pending: [{exerciseId,name,category,equipment}] } while the "Add to Superset" modal is open
 
   // ---------- Utilities ----------
   function $(id) { return document.getElementById(id); }
@@ -1085,31 +1079,6 @@
 
   $('librarySearch').addEventListener('input', renderLibraryList);
 
-  // Shared by the Add Exercise and Edit Exercise forms.
-  function tempoFieldsHtml(prefix, tempo) {
-    var labels = ['Ecc', 'Bottom', 'Con', 'Top'];
-    var fields = ['eccentric', 'bottomPause', 'concentric', 'topPause'];
-    return '<div class="tempo-label">Default Tempo (optional) — Eccentric-Bottom-Concentric-Top</div>' +
-      '<div class="tempo-grid">' +
-        fields.map(function (f, i) {
-          var v = tempo ? tempo[f] : null;
-          return '<div class="tempo-field"><label>' + labels[i] + '</label>' +
-            '<input type="number" inputmode="numeric" id="' + prefix + 'Tempo_' + f + '" value="' + (v == null ? '' : escapeHtml(v)) + '"></div>';
-        }).join('') +
-      '</div>';
-  }
-  function readTempoFields(prefix) {
-    var fields = ['eccentric', 'bottomPause', 'concentric', 'topPause'];
-    var t = {}, any = false;
-    fields.forEach(function (f) {
-      var el = $(prefix + 'Tempo_' + f);
-      var v = el && el.value !== '' ? Number(el.value) : null;
-      t[f] = isNaN(v) ? null : v;
-      if (t[f] != null) any = true;
-    });
-    return any ? t : null;
-  }
-
   var newExMuscleEditor = null;
 
   $('toggleAddExerciseBtn').addEventListener('click', function () {
@@ -1123,7 +1092,7 @@
       wireCategorySelect('newEx');
       $('newExMusclesField').innerHTML = '<div id="newEx-muscles-editor"></div>';
       newExMuscleEditor = createMuscleEditor('newEx', []);
-      $('newExTempoField').innerHTML = tempoFieldsHtml('newEx', null);
+      $('newExUnilateral').checked = false;
     }
   });
 
@@ -1132,11 +1101,11 @@
     var category = readCategorySelect('newEx');
     var equipment = readEquipmentSelect('newEx');
     var muscles = newExMuscleEditor ? newExMuscleEditor.getSelected() : [];
-    var defaultTempo = readTempoFields('newEx');
+    var unilateral = $('newExUnilateral').checked;
     if (!name) { showToast('Name is required', true); return; }
 
     function doSave() {
-      apiPost('addExercise', { name: name, category: category, equipment: equipment, muscles: muscles, defaultTempo: defaultTempo }).then(function () {
+      apiPost('addExercise', { name: name, category: category, equipment: equipment, muscles: muscles, unilateral: unilateral }).then(function () {
         $('newExName').value = '';
         $('addExerciseForm').style.display = 'none';
         showToast('Exercise added');
@@ -1162,7 +1131,7 @@
       '<div class="field" id="editExEquipmentField">' + equipmentSelectHtml('editEx', ex.equipment || '') + '</div>' +
       '<div class="field" id="editExCategoryField">' + categorySelectHtml('editEx', ex.category || '') + '</div>' +
       '<div class="field" id="editExMusclesField"><div id="editEx-muscles-editor"></div></div>' +
-      '<div class="field">' + tempoFieldsHtml('editEx', ex.defaultTempo) + '</div>' +
+      '<label class="field-row"><input type="checkbox" id="editExUnilateral"' + (ex.unilateral ? ' checked' : '') + '> Unilateral (single-side exercise)</label>' +
       '<div class="modal-actions">' +
         '<button class="btn secondary" id="editExCancelBtn">Cancel</button>' +
         '<button class="btn" id="editExSaveBtn">Save</button>' +
@@ -1201,11 +1170,11 @@
       var category = readCategorySelect('editEx');
       var equipment = readEquipmentSelect('editEx');
       var muscles = editExMuscleEditor.getSelected();
-      var defaultTempo = readTempoFields('editEx');
+      var unilateral = $('editExUnilateral').checked;
       if (!name) { showToast('Name is required', true); return; }
 
       function doSave() {
-        apiPost('updateExercise', { id: ex.id, name: name, category: category, equipment: equipment, muscles: muscles, defaultTempo: defaultTempo }).then(function () {
+        apiPost('updateExercise', { id: ex.id, name: name, category: category, equipment: equipment, muscles: muscles, unilateral: unilateral }).then(function () {
           closeModal(backdrop);
           showToast('Exercise updated');
           loadLibrary();
@@ -1838,8 +1807,6 @@
   function startNewSessionFromSetup(date, name, templateId) {
     session = { id: null, date: date, name: name, items: [], sets: [], pendingEntries: {} };
     sessionMode = 'new';
-    selectMode = false;
-    selectedLocalIds = [];
     entrySelection = {};
     entrySign = {};
     itemMode = {};
@@ -1877,6 +1844,7 @@
         equipment: known ? (known.equipment || '') : '',
         blockId: blockId
       });
+      if (known && known.unilateral) itemMode[localId] = 'both';
       (texc.setsReps || []).forEach(function (reps) {
         session.sets.push({ localId: uid(), itemLocalId: localId, mode: 'bilateral', weight: null, reps: reps, toFailure: false, tempo: null, dropSegments: [] });
       });
@@ -1960,6 +1928,7 @@
       '<div class="field"><label for="quickAddName">Name *</label>' +
       '<input type="text" id="quickAddName" value="' + escapeHtml(name) + '"></div>' +
       '<div class="field" id="quickAddEquipmentField">' + equipmentSelectHtml('quickAdd', '') + '</div>' +
+      '<label class="field-row" style="margin-bottom:10px;"><input type="checkbox" id="quickAddUnilateral"> Unilateral (single-side exercise)</label>' +
       '<button type="button" class="btn-sm" id="quickAddMoreToggle" style="margin-bottom:10px;">+ More options (category, muscles)</button>' +
       '<div id="quickAddMoreFields" style="display:none;">' +
         '<div class="field" id="quickAddCategoryField">' + categorySelectHtml('quickAdd', '') + '</div>' +
@@ -1986,11 +1955,12 @@
       var equip = readEquipmentSelect('quickAdd');
       var cat = readCategorySelect('quickAdd');
       var muscles = quickAddMuscleEditor.getSelected();
+      var unilateral = $('quickAddUnilateral').checked;
       if (!nm) { showToast('Name is required', true); return; }
       if (!equip) { showToast('Equipment is required', true); return; }
 
       function doSave() {
-        apiPost('addExercise', { name: nm, category: cat, equipment: equip, muscles: muscles }).then(function (newEx) {
+        apiPost('addExercise', { name: nm, category: cat, equipment: equip, muscles: muscles, unilateral: unilateral }).then(function (newEx) {
           exercisesCache.push(newEx);
           addExerciseToSession(newEx.id);
           hideQuickAdd();
@@ -2013,48 +1983,103 @@
   function addExerciseToSession(exerciseId) {
     var ex = exercisesCache.find(function (e) { return e.id === exerciseId; });
     if (!ex) return;
+    var localId = uid();
     session.items.push({
-      localId: uid(),
+      localId: localId,
       exerciseId: ex.id,
       name: ex.name,
       category: ex.category,
       equipment: ex.equipment || '',
       blockId: uid()
     });
+    if (ex.unilateral) itemMode[localId] = 'both';
     renderSession();
   }
 
   function removeExerciseFromSession(localId) {
     session.items = session.items.filter(function (i) { return i.localId !== localId; });
     session.sets = session.sets.filter(function (s) { return s.itemLocalId !== localId; });
-    selectedLocalIds = selectedLocalIds.filter(function (id) { return id !== localId; });
     renderSession();
   }
 
-  function toggleSelect(localId) {
-    var idx = selectedLocalIds.indexOf(localId);
-    if (idx === -1) selectedLocalIds.push(localId); else selectedLocalIds.splice(idx, 1);
-    selectMode = selectedLocalIds.length > 0;
-    renderSession();
+  // ---------- Superset builder modal ----------
+  // Triggered from an exercise's "+ Superset" button. Lets you search and add
+  // one or more exercises that join the workout already grouped with the
+  // exercise you started from — replaces the old "select checkboxes, then
+  // Link as Superset" flow. Works to grow an existing superset into a
+  // tri-set/giant-set too, since it just reuses the origin item's blockId.
+  function openSupersetBuilder(originItemLocalId) {
+    supersetBuilder = { originItemLocalId: originItemLocalId, pending: [], backdrop: null };
+    supersetBuilder.backdrop = showModal('Add to Superset', '<div id="sbBodyWrap"></div>', true);
+    renderSupersetBuilder();
   }
 
-  $('linkSelectedBtn').addEventListener('click', function () {
-    if (selectedLocalIds.length < 2) { showToast('Select at least 2 exercises', true); return; }
-    var newBlockId = uid();
-    session.items.forEach(function (item) {
-      if (selectedLocalIds.indexOf(item.localId) !== -1) item.blockId = newBlockId;
+  function closeSupersetBuilder() {
+    if (supersetBuilder && supersetBuilder.backdrop) closeModal(supersetBuilder.backdrop);
+    supersetBuilder = null;
+  }
+
+  function renderSupersetBuilder() {
+    if (!supersetBuilder) return;
+    var wrap = supersetBuilder.backdrop.querySelector('#sbBodyWrap');
+    if (!wrap) return;
+    var origin = session.items.find(function (i) { return i.localId === supersetBuilder.originItemLocalId; });
+    var pendingHtml = supersetBuilder.pending.map(function (p, idx) {
+      return '<div class="exercise-row"><span class="name">' + escapeHtml(p.name) + '</span>' +
+        '<button class="remove-x" data-sb-remove="' + idx + '">✕</button></div>';
+    }).join('');
+
+    wrap.innerHTML =
+      '<p class="muted" style="margin-top:0;">Grouping with <b>' + escapeHtml(origin ? origin.name : '') + '</b>. Search for exercises to add — each one joins this workout as part of the superset. Add as many as you want.</p>' +
+      (pendingHtml ? '<div style="margin-bottom:10px;">' + pendingHtml + '</div>' : '') +
+      '<div class="field"><input type="text" id="sbSearch" placeholder="Search exercises to add..." autocomplete="off"></div>' +
+      '<div id="sbResults" class="search-results"></div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn secondary" id="sbCancelBtn">Cancel</button>' +
+        '<button class="btn" id="sbConfirmBtn"' + (supersetBuilder.pending.length ? '' : ' disabled') + '>Add exercises as superset</button>' +
+      '</div>';
+
+    wrap.querySelectorAll('[data-sb-remove]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        supersetBuilder.pending.splice(Number(btn.dataset.sbRemove), 1);
+        renderSupersetBuilder();
+      });
     });
-    selectedLocalIds = [];
-    selectMode = false;
-    renderSession();
-    showToast('Linked as superset');
-  });
-
-  $('cancelSelectBtn').addEventListener('click', function () {
-    selectedLocalIds = [];
-    selectMode = false;
-    renderSession();
-  });
+    wrap.querySelector('#sbSearch').addEventListener('input', function () {
+      var q = this.value.trim().toLowerCase();
+      var results = wrap.querySelector('#sbResults');
+      if (!q) { results.innerHTML = ''; return; }
+      var matches = exercisesCache.filter(function (e) { return e.name.toLowerCase().indexOf(q) !== -1; }).slice(0, 20);
+      results.innerHTML = matches.length
+        ? matches.map(function (e) {
+            return '<div class="exercise-row" data-sb-pick="' + e.id + '"><span class="name">' + escapeHtml(e.name) + '</span>' + equipmentChipHtml(e.equipment) + '</div>';
+          }).join('')
+        : '<div class="muted" style="padding:8px 0;">No matches</div>';
+      results.querySelectorAll('[data-sb-pick]').forEach(function (row) {
+        row.addEventListener('click', function () {
+          var ex = exercisesCache.find(function (e) { return e.id === row.dataset.sbPick; });
+          if (!ex) return;
+          supersetBuilder.pending.push({ exerciseId: ex.id, name: ex.name, category: ex.category, equipment: ex.equipment || '', unilateral: !!ex.unilateral });
+          renderSupersetBuilder();
+        });
+      });
+    });
+    wrap.querySelector('#sbCancelBtn').addEventListener('click', closeSupersetBuilder);
+    wrap.querySelector('#sbConfirmBtn').addEventListener('click', function () {
+      if (!supersetBuilder.pending.length) return;
+      var originNow = session.items.find(function (i) { return i.localId === supersetBuilder.originItemLocalId; });
+      if (!originNow) { closeSupersetBuilder(); return; }
+      var sharedBlockId = originNow.blockId; // reuses the origin's current group, so this also grows an existing superset into a tri-set/giant-set
+      supersetBuilder.pending.forEach(function (p) {
+        var localId = uid();
+        session.items.push({ localId: localId, exerciseId: p.exerciseId, name: p.name, category: p.category, equipment: p.equipment, blockId: sharedBlockId });
+        if (p.unilateral) itemMode[localId] = 'both';
+      });
+      closeSupersetBuilder();
+      renderSession();
+      showToast('Added to superset');
+    });
+  }
 
   function groupByBlock(items) {
     var order = [];
@@ -2174,9 +2199,11 @@
         renderDropRows(key, s.dropSegments);
     }
 
-    html += expandedSetPanels[s.localId]
-      ? renderAdvancedPanel(key, s, defaultTempo, s.mode !== 'independent')
-      : '<button type="button" class="advanced-toggle" data-action="expandset" data-setid="' + s.localId + '">⚙ Failure / Tempo' + (s.mode !== 'independent' ? ' / Drop' : '') + '</button>';
+    var setPanelOpen = !!expandedSetPanels[s.localId];
+    html += '<button type="button" class="advanced-toggle" data-action="expandset" data-setid="' + s.localId + '">' +
+      (setPanelOpen ? '⚙ Hide Failure / Tempo' : '⚙ Failure / Tempo' + (s.mode !== 'independent' ? ' / Drop' : '')) +
+      '</button>';
+    if (setPanelOpen) html += renderAdvancedPanel(key, s, defaultTempo, s.mode !== 'independent');
     return html;
   }
 
@@ -2188,7 +2215,6 @@
 
   function renderSession() {
     var el = $('sessionExerciseList');
-    $('linkBar').style.display = selectMode ? 'block' : 'none';
 
     if (!session.items.length) {
       el.innerHTML = '<div class="empty-state">Search below to add exercises to this workout.</div>';
@@ -2213,14 +2239,21 @@
       node.addEventListener('click', function () {
         var action = node.dataset.action;
         var localId = node.dataset.local;
-        if (action === 'select') toggleSelect(localId);
-        else if (action === 'remove') removeExerciseFromSession(localId);
+        if (action === 'remove') removeExerciseFromSession(localId);
         else if (action === 'addset') addSet(node.dataset.block);
         else if (action === 'delset') deleteSet(node.dataset.setid, node.dataset.side);
         else if (action === 'togglesign') toggleEntrySign(node.dataset.block);
         else if (action === 'unlink') unlinkBlock(node.dataset.block);
-        else if (action === 'toggleentryadv') { getEntryAdvanced(node.dataset.block).open = true; renderSession(); }
-        else if (action === 'expandset') { expandedSetPanels[node.dataset.setid] = true; renderSession(); }
+        else if (action === 'opensuperset') openSupersetBuilder(localId);
+        else if (action === 'toggleentryadv') {
+          var eadv = getEntryAdvanced(node.dataset.block);
+          eadv.open = !eadv.open;
+          renderSession();
+        }
+        else if (action === 'expandset') {
+          expandedSetPanels[node.dataset.setid] = !expandedSetPanels[node.dataset.setid];
+          renderSession();
+        }
         else if (action === 'adddrop') {
           var st = stateForKey(node.dataset.key);
           if (st) { if (!st.dropSegments) st.dropSegments = []; st.dropSegments.push({ weight: null, reps: null }); renderSession(); }
@@ -2339,16 +2372,15 @@
   function renderBlockTable(block) {
     var isSuperset = block.items.length > 1;
     var checkboxes = block.items.map(function (item) {
-      var checked = selectedLocalIds.indexOf(item.localId) !== -1;
       var mode = itemMode[item.localId] || 'bilateral';
-      return '<span class="select-check ' + (checked ? 'checked' : '') + '" data-action="select" data-local="' + item.localId + '">' + (checked ? '✓' : '') + '</span>' +
-        '<span class="name">' + escapeHtml(item.name) + '</span>' +
+      return '<span class="name">' + escapeHtml(item.name) + '</span>' +
         (isSuperset ? '' : equipmentChipHtml(item.equipment)) +
         '<select class="mode-select" data-item="' + item.localId + '" title="Unilateral logging">' +
           '<option value="bilateral"' + (mode === 'bilateral' ? ' selected' : '') + '>Bilateral</option>' +
           '<option value="both"' + (mode === 'both' ? ' selected' : '') + '>Per Side (Same)</option>' +
           '<option value="independent"' + (mode === 'independent' ? ' selected' : '') + '>Per Side (L/R)</option>' +
         '</select>' +
+        '<button type="button" class="btn-sm" data-action="opensuperset" data-local="' + item.localId + '">+ Superset</button>' +
         '<button class="remove-x" data-action="remove" data-local="' + item.localId + '">✕</button>';
     }).join('<span class="muted" style="margin:0 4px;">+</span>');
 
@@ -2399,8 +2431,8 @@
     }
     var pending = session.pendingEntries[block.blockId];
     var prefilledClass = (!pending.touched && (pending.weight !== '' || pending.reps !== '')) ? ' prefilled' : '';
-    var weightPlaceholder = mode === 'both' ? 'lbs/side' : 'lbs';
-    var repsPlaceholder = mode === 'both' ? 'reps/side' : 'reps';
+    var weightPlaceholder = 'lbs';
+    var repsPlaceholder = mode === 'both' ? 'each' : 'reps';
 
     var entryHtml;
     if (mode === 'independent') {
@@ -2425,9 +2457,9 @@
     }
 
     var adv = getEntryAdvanced(block.blockId);
-    var advancedHtml = adv.open
-      ? renderAdvancedPanel('entry:' + block.blockId, adv, defaultTempo, false)
-      : '<button type="button" class="advanced-toggle" data-action="toggleentryadv" data-block="' + block.blockId + '">⚙ Failure / Tempo</button>';
+    var advancedHtml = '<button type="button" class="advanced-toggle" data-action="toggleentryadv" data-block="' + block.blockId + '">' +
+      (adv.open ? '⚙ Hide Failure / Tempo' : '⚙ Failure / Tempo') + '</button>';
+    if (adv.open) advancedHtml += renderAdvancedPanel('entry:' + block.blockId, adv, defaultTempo, false);
 
     return '<div class="block-card-head"><div class="titles">' + checkboxes + '</div></div>' +
       '<div class="set-table">' +
@@ -2578,8 +2610,6 @@
   function loadWorkoutIntoSessionAfterSetup(workout, date, name) {
     session = { id: workout.id, date: date, name: name, items: [], sets: [], pendingEntries: {} };
     sessionMode = 'edit';
-    selectMode = false;
-    selectedLocalIds = [];
     entrySelection = {};
     entrySign = {};
     itemMode = {};

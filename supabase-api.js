@@ -50,7 +50,8 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       id: r.id, name: r.name,
       category: r.category || '', equipment: r.equipment || '',
       muscles: toArray(r.muscles),
-      defaultTempo: r.default_tempo || null
+      defaultTempo: r.default_tempo || null,
+      unilateral: !!r.is_unilateral
     };
   }
 
@@ -276,7 +277,7 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       if (!name) throw new Error('Exercise name is required');
       return client().from('exercises').insert({
         name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles),
-        default_tempo: b.defaultTempo || null
+        default_tempo: b.defaultTempo || null, is_unilateral: !!b.unilateral
       }).select().single().then(take).then(mapExercise);
     },
 
@@ -284,10 +285,12 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       if (!b.id) throw new Error('Exercise id is required');
       var name = (b.name || '').trim();
       if (!name) throw new Error('Exercise name is required');
-      var patch = { name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles) };
-      // Only touch default_tempo when the caller actually sent it — the existing
-      // edit-exercise form doesn't know about tempo yet, and it must not wipe
-      // out a default set elsewhere just because it wasn't in this particular payload.
+      var patch = {
+        name: name, category: b.category || '', equipment: b.equipment || '', muscles: toArray(b.muscles),
+        is_unilateral: !!b.unilateral
+      };
+      // Only touch default_tempo when the caller actually sent it — no UI sets
+      // this anymore, but it must not get wiped by callers that don't send it.
       if ('defaultTempo' in b) patch.default_tempo = b.defaultTempo || null;
       return client().from('exercises').update(patch)
         .eq('id', b.id).select().single().then(take).then(mapExercise);
