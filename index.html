@@ -324,6 +324,15 @@
   .cal-foot .cal-actions { display: flex; gap: 6px; }
   .cal-filter-label { font-size: 13px; color: var(--text-dim); margin: 2px 2px 8px; }
 
+  /* Bodyweight history: summary tiles + entry rows */
+  .bw-summary { display: flex; gap: 10px; margin-bottom: 12px; }
+  .bw-stat { flex: 1; background: var(--card); border-radius: var(--radius-md); padding: 10px 14px; }
+  .bw-stat .k { font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
+  .bw-stat .v { font-size: 18px; font-weight: 700; }
+  .bw-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .bw-weight { font-size: 20px; font-weight: 700; white-space: nowrap; }
+  .bw-weight .muted { font-size: 13px; font-weight: 400; }
+
   .search-results { max-height: 260px; overflow-y: auto; margin-top: 8px; }
   .search-results .exercise-row { cursor: pointer; }
   .search-results .exercise-row:active { background: var(--card-soft); }
@@ -423,6 +432,8 @@
   .drawer-panel.open { transform: translateY(0); }
   .drawer-profile-row { display: flex; align-items: center; gap: 14px; }
   .drawer-profile-name { font-size: 17px; font-weight: 700; }
+  .drawer-weight { margin-top: 16px; padding: 0 2px; font-size: 15px; font-weight: 600; }
+  .drawer-weight .muted { font-weight: 400; margin-left: 6px; }
   .drawer-item {
     display: block; width: 100%; text-align: left; margin-top: 14px; padding: 14px;
     background: var(--card-soft); color: var(--text); border: none; border-radius: var(--radius-md);
@@ -449,6 +460,7 @@
       <div class="avatar avatar-lg" id="drawerAvatar"></div>
       <div class="drawer-profile-name" id="drawerName">Your Name</div>
     </div>
+    <div class="drawer-weight" id="drawerWeight"></div>
     <button class="drawer-item" id="editAccountBtn">Edit Account</button>
   </div>
 </div>
@@ -524,6 +536,7 @@
       <h2>Log Workout</h2>
       <p class="muted">Start a new session to begin adding exercises and sets.</p>
       <button class="btn block" id="startWorkoutBtn">Log Workout</button>
+      <button class="btn secondary block" id="logBodyweightBtn" style="margin-top:10px;">Log Body Weight</button>
     </div>
 
     <!-- Date/name (and optionally: pick a saved workout to pre-fill) before entering the logging screen -->
@@ -575,6 +588,10 @@
   <!-- HISTORY SCREEN -->
   <section class="screen" id="screen-history">
     <h2>History</h2>
+    <div class="lib-subnav" id="historySubnav">
+      <button class="lib-subnav-btn active" data-histtab="workout">Workout</button>
+      <button class="lib-subnav-btn" data-histtab="bodyweight">Body Weight</button>
+    </div>
     <div id="historyCalendar"></div>
     <div id="historyCards"></div>
   </section>
@@ -758,6 +775,8 @@
 
   function openAccountDrawer() {
     renderAvatars();
+    renderDrawerWeight();
+    if (!bodyweightLoaded) loadBodyweight().catch(function () { /* drawer just keeps showing "—" */ });
     $('accountDrawerBackdrop').style.display = 'flex';
     requestAnimationFrame(function () { $('accountDrawer').classList.add('open'); });
   }
@@ -1278,7 +1297,7 @@
 
   function switchLibTab(tab) {
     currentLibTab = tab;
-    document.querySelectorAll('.lib-subnav-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.libtab === tab); });
+    document.querySelectorAll('#librarySubnav .lib-subnav-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.libtab === tab); });
     document.querySelectorAll('.lib-tab-panel').forEach(function (p) { p.style.display = 'none'; p.classList.remove('swipe-anim'); });
     var panel = $('libTab' + tab.charAt(0).toUpperCase() + tab.slice(1));
     panel.style.display = 'block';
@@ -1288,7 +1307,7 @@
     else if (tab === 'programs') loadPrograms();
   }
 
-  document.querySelectorAll('.lib-subnav-btn').forEach(function (b) {
+  document.querySelectorAll('#librarySubnav .lib-subnav-btn').forEach(function (b) {
     b.addEventListener('click', function () { switchLibTab(b.dataset.libtab); });
   });
 
@@ -2813,14 +2832,100 @@
     });
   });
 
+  // ---------- Bodyweight ----------
+  // One entry per day (weights in lbs). The "current" weight is the entry with the
+  // latest DATE — not the latest one typed in — so back-filling an old day doesn't change it.
+  var bodyweightLogs = []; // [{id, date, weight}], newest date first
+  var bodyweightLoaded = false;
+
+  function fmtWeight(v) { return String(Math.round(Number(v) * 100) / 100); }
+  function fmtSigned(v) {
+    v = Math.round(v * 100) / 100;
+    return (v > 0 ? '+' : v < 0 ? '−' : '') + fmtWeight(Math.abs(v));
+  }
+
+  function loadBodyweight() {
+    return apiGet('getBodyweightLogs').then(function (rows) {
+      bodyweightLogs = rows;
+      bodyweightLoaded = true;
+      renderDrawerWeight();
+      return rows;
+    });
+  }
+
+  function renderDrawerWeight() {
+    var latest = bodyweightLogs[0];
+    $('drawerWeight').innerHTML = 'Current Weight: ' + (latest
+      ? '<strong>' + escapeHtml(fmtWeight(latest.weight)) + ' lbs</strong><span class="muted">' + escapeHtml(prettyDate(latest.date)) + '</span>'
+      : '<span class="muted">—</span>');
+  }
+
+  // Add (no argument) or edit/delete (an existing entry) a bodyweight log.
+  function openBodyweightModal(entry) {
+    var editing = !!entry;
+    var last = bodyweightLogs[0];
+    var body =
+      '<div class="field"><label for="bwDateInput">Date</label>' +
+        '<input type="date" id="bwDateInput" max="' + todayISO() + '" value="' + escapeHtml(editing ? entry.date : todayISO()) + '"></div>' +
+      '<div class="field"><label for="bwWeightInput">Weight (lbs)</label>' +
+        '<input type="text" inputmode="decimal" id="bwWeightInput" autocomplete="off" placeholder="' + escapeHtml(last ? 'Last: ' + fmtWeight(last.weight) : 'e.g. 180') + '"' +
+        ' value="' + escapeHtml(editing ? fmtWeight(entry.weight) : '') + '"></div>' +
+      '<button class="btn block" id="bwSaveBtn">' + (editing ? 'Save Changes' : 'Save') + '</button>' +
+      (editing ? '<button class="btn-sm danger" id="bwDeleteBtn" style="width:100%; margin-top:8px;">Delete Entry</button>' : '');
+
+    var backdrop = showModal(editing ? 'Edit Body Weight' : 'Log Body Weight', body, true);
+
+    // Refresh the cache (and drawer), repaint History if it's the visible screen, then close.
+    function finish(message) {
+      return loadBodyweight().then(function () {
+        if ($('screen-history').classList.contains('active')) renderHistory();
+        closeModal(backdrop);
+        showToast(message);
+      });
+    }
+
+    $('bwSaveBtn').addEventListener('click', function () {
+      var date = $('bwDateInput').value;
+      var weight = parseFloat($('bwWeightInput').value.replace(',', '.'));
+      if (!date) { showToast('Pick a date', true); return; }
+      if (date > todayISO()) { showToast("Date can't be in the future", true); return; }
+      if (!isFinite(weight) || weight <= 0) { showToast('Enter a valid weight', true); return; }
+
+      $('bwSaveBtn').disabled = true;
+      var req = editing
+        ? apiPost('updateBodyweight', { id: entry.id, date: date, weight: weight })
+        : apiPost('saveBodyweight', { date: date, weight: weight });
+      req.then(function () {
+        return finish(editing ? 'Body weight updated' : 'Body weight logged');
+      }).catch(function (err) {
+        showToast(err.message, true);
+        $('bwSaveBtn').disabled = false;
+      });
+    });
+
+    if (editing) {
+      $('bwDeleteBtn').addEventListener('click', function () {
+        if (!confirm('Delete this body weight entry?')) return;
+        apiPost('deleteBodyweight', { id: entry.id })
+          .then(function () { return finish('Entry deleted'); })
+          .catch(function (err) { showToast(err.message, true); });
+      });
+    }
+  }
+
+  $('logBodyweightBtn').addEventListener('click', function () { openBodyweightModal(); });
+
   // ---------- History ----------
-  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var MONTHS =['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   var historyWorkouts = [];
   var historyLoaded = false;
   var calYear = new Date().getFullYear();
   var calMonthIdx = new Date().getMonth();
-  // No dates = show everything. Only `start` = one day. `start` + `end` = a range (start <= end).
-  var calSel = { start: null, end: null };
+  var historyTab = 'workout'; // 'workout' | 'bodyweight'
+  // Each tab remembers its own selection. No dates = show everything. Only `start` = one day.
+  // `start` + `end` = a range (start <= end).
+  var histSel = { workout: { start: null, end: null }, bodyweight: { start: null, end: null } };
+  function sel() { return histSel[historyTab]; }
 
   function pad2(n) { return String(n).padStart(2, '0'); }
   function prettyDate(iso) {
@@ -2832,27 +2937,31 @@
   // Tap a day: first tap = that day; tapping a different day next = a range between them;
   // tapping the same single day again = clear; tapping after a finished range starts over.
   function pickCalendarDate(iso) {
-    if (!calSel.start || calSel.end) calSel = { start: iso, end: null };
-    else if (iso === calSel.start) calSel = { start: null, end: null };
-    else calSel = { start: iso < calSel.start ? iso : calSel.start, end: iso < calSel.start ? calSel.start : iso };
+    var cur = sel();
+    if (!cur.start || cur.end) histSel[historyTab] = { start: iso, end: null };
+    else if (iso === cur.start) histSel[historyTab] = { start: null, end: null };
+    else histSel[historyTab] = { start: iso < cur.start ? iso : cur.start, end: iso < cur.start ? cur.start : iso };
     renderHistory();
   }
 
-  function workoutsInSelection() {
-    var s = calSel.start, e = calSel.end;
-    if (!s) return historyWorkouts;
-    return historyWorkouts.filter(function (w) { return e ? (w.date >= s && w.date <= e) : w.date === s; });
+  // Filters any list of {date} rows down to the current tab's selection.
+  function inSelection(list) {
+    var s = sel().start, e = sel().end;
+    if (!s) return list;
+    return list.filter(function (x) { return e ? (x.date >= s && x.date <= e) : x.date === s; });
   }
-  function selectionLabel() {
-    if (!calSel.start) return 'All workouts';
-    return calSel.end ? prettyDate(calSel.start) + ' – ' + prettyDate(calSel.end) : prettyDate(calSel.start);
+  function selectionLabel(allLabel) {
+    var cur = sel();
+    if (!cur.start) return allLabel;
+    return cur.end ? prettyDate(cur.start) + ' – ' + prettyDate(cur.end) : prettyDate(cur.start);
   }
 
   function renderCalendar() {
     var today = todayISO();
-    var withWorkout = {};
-    historyWorkouts.forEach(function (w) { withWorkout[w.date] = true; });
-    var s = calSel.start, e = calSel.end;
+    var isBw = historyTab === 'bodyweight';
+    var marked = {}; // days that get the square outline: a workout (Workout tab) or a weigh-in (Bodyweight tab)
+    (isBw ? bodyweightLogs : historyWorkouts).forEach(function (x) { marked[x.date] = true; });
+    var s = sel().start, e = sel().end;
     var leading = new Date(calYear, calMonthIdx, 1).getDay(); // weeks start on Sunday
     var daysInMonth = new Date(calYear, calMonthIdx + 1, 0).getDate();
 
@@ -2862,14 +2971,14 @@
       var iso = calYear + '-' + pad2(calMonthIdx + 1) + '-' + pad2(d);
       var cls = 'cal-day';
       if (iso === today) cls += ' is-today';
-      if (withWorkout[iso]) cls += ' has-workout';
+      if (marked[iso]) cls += ' has-workout';
       if (s && !e && iso === s) cls += ' sel sel-single';
       else if (s && e) {
         if (iso === s) cls += ' sel sel-start';
         else if (iso === e) cls += ' sel sel-end';
         else if (iso > s && iso < e) cls += ' sel';
       }
-      cells += '<button type="button" class="' + cls + '" data-date="' + iso + '" aria-label="' + prettyDate(iso) + (withWorkout[iso] ? ', workout' : '') + '">' +
+      cells += '<button type="button" class="' + cls + '" data-date="' + iso + '" aria-label="' + prettyDate(iso) + (marked[iso] ? (isBw ? ', weight logged' : ', workout') : '') + '">' +
         '<span class="cal-box"><span class="cal-num">' + d + '</span></span></button>';
     }
 
@@ -2892,10 +3001,10 @@
     var el = $('historyCards');
     if (!historyLoaded) { el.innerHTML = '<div class="muted">Loading...</div>'; return; }
     if (!historyWorkouts.length) { el.innerHTML = '<div class="empty-state">No workouts logged yet.</div>'; return; }
-    var list = workoutsInSelection();
-    var heading = '<div class="cal-filter-label">' + escapeHtml(selectionLabel()) + ' · ' + list.length + ' workout' + (list.length === 1 ? '' : 's') + '</div>';
+    var list = inSelection(historyWorkouts);
+    var heading = '<div class="cal-filter-label">' + escapeHtml(selectionLabel('All workouts')) + ' · ' + list.length + ' workout' + (list.length === 1 ? '' : 's') + '</div>';
     if (!list.length) {
-      el.innerHTML = heading + '<div class="empty-state" style="padding:24px 20px;">No workouts ' + (calSel.end ? 'in this range.' : 'on this day.') + '</div>';
+      el.innerHTML = heading + '<div class="empty-state" style="padding:24px 20px;">No workouts ' + (sel().end ? 'in this range.' : 'on this day.') + '</div>';
       return;
     }
     el.innerHTML = heading + list.map(function (w) {
@@ -2908,10 +3017,57 @@
     }).join('');
   }
 
+  function renderBodyweightHistory() {
+    var el = $('historyCards');
+    if (!bodyweightLoaded) { el.innerHTML = '<div class="muted">Loading...</div>'; return; }
+    if (!bodyweightLogs.length) {
+      el.innerHTML = '<div class="empty-state">No body weight logged yet.<br>Use “Log Body Weight” on the Log tab.</div>';
+      return;
+    }
+    var list = inSelection(bodyweightLogs); // newest first
+    var heading = '<div class="cal-filter-label">' + escapeHtml(selectionLabel('All entries')) + ' · ' + list.length + (list.length === 1 ? ' entry' : ' entries') + '</div>';
+    if (!list.length) {
+      el.innerHTML = heading + '<div class="empty-state" style="padding:24px 20px;">No entries ' + (sel().end ? 'in this range.' : 'on this day.') + '</div>';
+      return;
+    }
+
+    // Change across the selection = newest entry minus oldest entry in it (needs at least two).
+    var change = list.length > 1 ? list[0].weight - list[list.length - 1].weight : null;
+    var summary = '<div class="bw-summary">' +
+      '<div class="bw-stat"><div class="k">Latest</div><div class="v">' + escapeHtml(fmtWeight(list[0].weight)) + ' lbs</div></div>' +
+      '<div class="bw-stat"><div class="k">Change</div><div class="v">' + (change === null ? '—' : escapeHtml(fmtSigned(change)) + ' lbs') + '</div></div>' +
+    '</div>';
+
+    // Each row's delta is against the previous entry in the FULL history (not just this selection).
+    var rows = list.map(function (x) {
+      var idx = bodyweightLogs.indexOf(x);
+      var prev = bodyweightLogs[idx + 1];
+      var delta = prev ? fmtSigned(x.weight - prev.weight) + ' lbs' : 'First entry';
+      if (prev && Math.round((x.weight - prev.weight) * 100) === 0) delta = 'No change';
+      return '<div class="card bw-row" data-bwid="' + escapeHtml(x.id) + '" style="cursor:pointer;">' +
+        '<div><div style="font-weight:700; margin-bottom:2px;">' + escapeHtml(x.date) + '</div><div class="muted">' + escapeHtml(delta) + '</div></div>' +
+        '<div class="bw-weight">' + escapeHtml(fmtWeight(x.weight)) + ' <span class="muted">lbs</span></div>' +
+      '</div>';
+    }).join('');
+    el.innerHTML = heading + summary + rows;
+  }
+
   function renderHistory() {
     renderCalendar();
-    renderHistoryCards();
+    if (historyTab === 'bodyweight') renderBodyweightHistory();
+    else renderHistoryCards();
   }
+
+  function switchHistoryTab(tab) {
+    historyTab = tab;
+    document.querySelectorAll('#historySubnav .lib-subnav-btn').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.histtab === tab);
+    });
+    loadHistory();
+  }
+  document.querySelectorAll('#historySubnav .lib-subnav-btn').forEach(function (b) {
+    b.addEventListener('click', function () { switchHistoryTab(b.dataset.histtab); });
+  });
 
   $('historyCalendar').addEventListener('click', function (ev) {
     var day = ev.target.closest('[data-date]');
@@ -2929,24 +3085,37 @@
       calMonthIdx = new Date().getMonth();
       renderCalendar();
     } else if (act === 'clear') {
-      calSel = { start: null, end: null };
+      histSel[historyTab] = { start: null, end: null };
       renderHistory();
     }
   });
   $('historyCards').addEventListener('click', function (ev) {
     var card = ev.target.closest('.card[data-id]');
-    if (card) openWorkoutDetail(card.dataset.id);
+    if (card) { openWorkoutDetail(card.dataset.id); return; }
+    var bw = ev.target.closest('.card[data-bwid]');
+    if (bw) {
+      var entry = bodyweightLogs.filter(function (x) { return x.id === bw.dataset.bwid; })[0];
+      if (entry) openBodyweightModal(entry);
+    }
   });
 
   function loadHistory() {
     renderHistory(); // calendar (and any already-loaded cards) show immediately; refreshed once the fetch returns
+    var tab = historyTab;
+    // If the user flips tabs mid-fetch, the result still lands in its cache but only repaints the tab that's showing.
+    function fail(err) {
+      if (historyTab !== tab) return;
+      $('historyCards').innerHTML = '<div class="empty-state">Failed to load: ' + escapeHtml(err.message) + '</div>';
+    }
+    if (tab === 'bodyweight') {
+      loadBodyweight().then(renderHistory).catch(fail);
+      return;
+    }
     apiGet('getWorkouts').then(function (data) {
       historyWorkouts = data;
       historyLoaded = true;
       renderHistory();
-    }).catch(function (err) {
-      $('historyCards').innerHTML = '<div class="empty-state">Failed to load: ' + escapeHtml(err.message) + '</div>';
-    });
+    }).catch(fail);
   }
 
   function openWorkoutDetail(id) {
@@ -3117,6 +3286,7 @@
     window.WorkoutAPI.getSession().then(function (session) {
       if (session) {
         showScreen('library');
+        loadBodyweight().catch(function () { /* drawer/history surface this themselves when opened */ });
       } else {
         openSignInModal(true);
       }

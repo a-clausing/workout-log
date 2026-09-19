@@ -55,6 +55,10 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
     };
   }
 
+  function mapBodyweight(r) {
+    return { id: r.id, date: String(r.date), weight: Number(r.weight) };
+  }
+
   function exerciseNameMap() {
     return client().from('exercises').select('id,name,category,equipment').then(take).then(function (rows) {
       var map = {};
@@ -204,6 +208,13 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
         });
     },
 
+    // Newest date first. One entry per day, so the first row is the "current" weight.
+    getBodyweightLogs: function () {
+      return client().from('bodyweight_logs').select('id,date,weight')
+        .order('date', { ascending: false })
+        .then(take).then(function (rows) { return (rows || []).map(mapBodyweight); });
+    },
+
     getWorkoutTemplates: function () {
       return Promise.all([
         client().from('workout_templates').select('*').order('created_at', { ascending: true }).then(take),
@@ -338,6 +349,37 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
       if (!b.id) throw new Error('Workout id is required');
       // sets are removed automatically (ON DELETE CASCADE)
       return client().from('workouts').delete().eq('id', b.id).then(take)
+        .then(function () { return { id: b.id, deleted: true }; });
+    },
+
+    // One entry per day: logging a date that already has one replaces its weight.
+    saveBodyweight: function (b) {
+      var weight = Number(b.weight);
+      if (!b.date) throw new Error('Date is required');
+      if (!isFinite(weight) || weight <= 0) throw new Error('Enter a valid weight');
+      if (!_session) throw new Error('Not signed in');
+      return client().from('bodyweight_logs').upsert(
+        { user_id: _session.user.id, date: b.date, weight: weight },
+        { onConflict: 'user_id,date' }
+      ).select('id,date,weight').single().then(take).then(mapBodyweight);
+    },
+
+    updateBodyweight: function (b) {
+      var weight = Number(b.weight);
+      if (!b.id) throw new Error('Entry id is required');
+      if (!b.date) throw new Error('Date is required');
+      if (!isFinite(weight) || weight <= 0) throw new Error('Enter a valid weight');
+      return client().from('bodyweight_logs').update({ date: b.date, weight: weight })
+        .eq('id', b.id).select('id,date,weight').single().then(take).then(mapBodyweight)
+        .catch(function (err) {
+          if (/duplicate key|unique/i.test(err.message)) throw new Error('You already have a body weight entry for that date.');
+          throw err;
+        });
+    },
+
+    deleteBodyweight: function (b) {
+      if (!b.id) throw new Error('Entry id is required');
+      return client().from('bodyweight_logs').delete().eq('id', b.id).then(take)
         .then(function () { return { id: b.id, deleted: true }; });
     },
 
