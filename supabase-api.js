@@ -20,6 +20,11 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
     return;
   }
 
+  // Links in confirmation / password-reset emails send people back to this page as
+  // "#access_token=...&type=signup|recovery" (or "#error=...&error_description=..." if the
+  // link expired). Snapshot that BEFORE supabase-js reads it and cleans the address bar.
+  var LANDING = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+
   var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var _session = undefined; // undefined = not checked yet, null = signed out, object = signed in
 
@@ -458,12 +463,71 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
 
   // ---------- auth ----------
 
+  // Turns Supabase's auth errors into messages a person can act on. `.code` lets the UI react
+  // ('unconfirmed' -> offer to resend the email, 'exists' -> offer to sign in instead).
+  function authError(err) {
+    var msg = (err && err.message) || 'Something went wrong. Please try again.';
+    var e = new Error(msg);
+    if (/invalid login credentials/i.test(msg)) e.message = 'Incorrect email or password.';
+    else if (/email not confirmed/i.test(msg)) { e.message = 'Please confirm your email first. Check your inbox for the link.'; e.code = 'unconfirmed'; }
+    else if (/already (been )?registered/i.test(msg)) { e.message = 'An account with this email already exists. Try signing in instead.'; e.code = 'exists'; }
+    else if (/rate limit|too many|only request this after|security purposes/i.test(msg)) e.message = 'Too many attempts. Please wait a minute and try again.';
+    else if (/error sending .*email|sending .*email/i.test(msg)) e.message = "We couldn't send the email right now. Please try again in a bit.";
+    else if (/invalid email|unable to validate email|valid email/i.test(msg)) e.message = 'Enter a valid email address.';
+    return e;
+  }
+
+  // Emailed links (confirm / reset) land back on this same page.
+  function appUrl() { return window.location.origin + window.location.pathname; }
+
   function signIn(email, password) {
     return sb.auth.signInWithPassword({ email: email, password: password }).then(function (res) {
-      if (res.error) throw new Error(res.error.message || 'Sign in failed');
+      if (res.error) throw authError(res.error);
       _session = res.data.session;
       return _session;
     });
+  }
+
+  // Resolves { needsConfirmation }. With email confirmation ON there's no session yet — the
+  // person has to click the emailed link first. (If confirmation is off in Supabase, they're
+  // signed in immediately and needsConfirmation is false.)
+  function signUp(email, password) {
+    return sb.auth.signUp({ email: email, password: password, options: { emailRedirectTo: appUrl() } }).then(function (res) {
+      if (res.error) throw authError(res.error);
+      var user = res.data.user;
+      // Supabase hides "this email is already registered" when confirmation is on: instead of
+      // an error it returns a user with no identities. Surface that as a real message.
+      if (user && Array.isArray(user.identities) && user.identities.length === 0) {
+        var e = new Error('An account with this email already exists. Try signing in instead.');
+        e.code = 'exists';
+        throw e;
+      }
+      if (res.data.session) _session = res.data.session;
+      return { needsConfirmation: !res.data.session };
+    });
+  }
+
+  function resendConfirmation(email) {
+    return sb.auth.resend({ type: 'signup', email: email, options: { emailRedirectTo: appUrl() } })
+      .then(function (res) { if (res.error) throw authError(res.error); });
+  }
+
+  // Always resolves for a well-formed address whether or not an account exists (by design —
+  // it doesn't reveal who's registered).
+  function resetPassword(email) {
+    return sb.auth.resetPasswordForEmail(email, { redirectTo: appUrl() })
+      .then(function (res) { if (res.error) throw authError(res.error); });
+  }
+
+  function updatePassword(newPassword) {
+    return sb.auth.updateUser({ password: newPassword })
+      .then(function (res) { if (res.error) throw authError(res.error); });
+  }
+
+  // What the page was opened from: { type: 'signup' | 'recovery' | '', error: '' }.
+  function getLanding() {
+    var error = LANDING.get('error_description') || (LANDING.get('error') ? 'That link is invalid or has expired.' : '');
+    return { type: LANDING.get('type') || '', error: error.replace(/\+/g, ' ') };
   }
   function signOut() {
     return sb.auth.signOut().then(function () { _session = null; });
@@ -478,6 +542,11 @@ var SUPABASE_ANON_KEY = 'sb_publishable_kJIdV9A-fmM7kRRvhsMkdQ_TluKpyBi';
 
   window.WorkoutAPI = {
     signIn: signIn,
+    signUp: signUp,
+    resendConfirmation: resendConfirmation,
+    resetPassword: resetPassword,
+    updatePassword: updatePassword,
+    getLanding: getLanding,
     signOut: signOut,
     getSession: getSession,
     getCachedSession: getCachedSession,
